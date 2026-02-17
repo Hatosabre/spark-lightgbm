@@ -32,8 +32,17 @@ def _mml_from_java(java_stage):
 
     stage_name = java_stage.getClass().getName().replace("org.apache.spark", "pyspark")
     stage_name = stage_name.replace("com.microsoft.azure.synapse.ml", "synapse.ml")
-    # Generate a default new instance from the stage_name class.
-    py_type = __get_class(stage_name)
+
+    try:
+        py_type = __get_class(stage_name)
+    except (ModuleNotFoundError, ImportError, AttributeError):
+        # Python class not found — wrap as a generic JavaParams so that
+        # method calls (transform, predict, etc.) are delegated to the JVM.
+        py_stage = JavaParams.__new__(JavaParams)
+        py_stage._java_obj = java_stage
+        py_stage.uid = java_stage.uid()
+        return py_stage
+
     if issubclass(py_type, JavaParams):
         # Load information from java_stage to the instance.
         py_stage = py_type()
@@ -78,9 +87,18 @@ def _mml_loadParamsInstance(path, sc):
         pythonClassName = pythonClassName.replace(
             "com.microsoft.azure.synapse.ml", "synapse.ml"
         )
-    py_type = __get_class(pythonClassName)
-    instance = py_type.load(path)
-    return instance
+    try:
+        py_type = __get_class(pythonClassName)
+        instance = py_type.load(path)
+        return instance
+    except (ModuleNotFoundError, ImportError, AttributeError):
+        # Python class resolution failed — fall back to loading via JVM
+        javaClassName = metadata["class"]
+        java_class = sc._jvm
+        for part in javaClassName.split("."):
+            java_class = getattr(java_class, part)
+        java_obj = java_class.load(path)
+        return JavaParams._from_java(java_obj)
 
 
 DefaultParamsReader.loadParamsInstance = _mml_loadParamsInstance
