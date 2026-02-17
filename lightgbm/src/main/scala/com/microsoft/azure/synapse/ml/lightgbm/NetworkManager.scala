@@ -104,24 +104,29 @@ object NetworkManager {
                            taskId: Long,
                            partitionId: Int,
                            shouldExecuteTraining: Boolean,
-                           measures: TaskInstrumentationMeasures): NetworkTopologyInfo = {
+                           measures: TaskInstrumentationMeasures): (NetworkTopologyInfo, Option[Socket]) = {
     measures.markNetworkInitializationStart()
     val networkParams = ctx.networkParams
-    val out = using(findOpenPort(ctx, log).get) {
-      openPort =>
-        val localListenPort = openPort.getLocalPort
-        log.info(s"LightGBM task $taskId connecting to host: ${networkParams.ipAddress}, port: ${networkParams.port}")
-        FaultToleranceUtils.retryWithTimeout() {
-          getNetworkTopologyInfoFromDriver(networkParams,
-                                           taskId,
-                                           partitionId,
-                                           localListenPort,
-                                           log,
-                                           shouldExecuteTraining)
-        }
-    }.get
-    measures.markNetworkInitializationStop()
-    out
+    val portSocket = findOpenPort(ctx, log)
+    try {
+      val openPort = portSocket.get
+      val localListenPort = openPort.getLocalPort
+      log.info(s"LightGBM task $taskId connecting to host: ${networkParams.ipAddress}, port: ${networkParams.port}")
+      val info = FaultToleranceUtils.retryWithTimeout() {
+        getNetworkTopologyInfoFromDriver(networkParams,
+                                         taskId,
+                                         partitionId,
+                                         localListenPort,
+                                         log,
+                                         shouldExecuteTraining)
+      }
+      measures.markNetworkInitializationStop()
+      (info, portSocket)
+    } catch {
+      case e: Exception =>
+        portSocket.foreach(_.close())
+        throw e
+    }
   }
 
   private def getNetworkTopologyInfoFromDriver(networkParams: NetworkParams,
@@ -212,8 +217,9 @@ object NetworkManager {
           log.info(s"NetworkInit reached maximum exceptions on retry: $ex")
           throw ex
         }
-        log.info(s"Retrying NetworkInit with local port ${ctx.localListenPort}")
-        initLightGBMNetwork(ctx, log, retry - 1, delay * 2)
+        log.info(s"Retrying NetworkInit with local port ${ctx.localListenPort}, retries remaining: $retry")
+        val nextDelay = math.min(delay * 2, LightGBMConstants.MaxRetryDelay)
+        initLightGBMNetwork(ctx, log, retry - 1, nextDelay)
     }
   }
 
