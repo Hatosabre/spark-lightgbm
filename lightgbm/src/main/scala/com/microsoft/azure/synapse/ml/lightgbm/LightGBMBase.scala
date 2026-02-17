@@ -284,7 +284,8 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
       getMonotoneConstraints,
       get(monotoneConstraintsMethod),
       get(monotonePenalty),
-      getSlotNames)
+      getSlotNames,
+      getMetricLogPeriod)
   }
 
   /**
@@ -630,6 +631,19 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
 
     val lightGBMBooster = results.flatMap(r => r.booster).head
     measures.setTaskMeasures(results.map(r => r.taskMeasures))
+
+    // Retrieve metrics from the main worker that returned the booster
+    val mainResult = results.find(_.booster.isDefined)
+    val metricLog = mainResult.map(_.metricLog).getOrElse(Array.empty)
+    if (metricLog.nonEmpty) {
+      println("LightGBM training metrics:")
+      metricLog.foreach(println)
+    }
+
+    // Attach structured metric history to the booster for programmatic access
+    val metricHistory = mainResult.map(_.metricHistory).getOrElse(Array.empty)
+    lightGBMBooster.trainingMetrics = metricHistory
+
     lightGBMBooster
   }
 
