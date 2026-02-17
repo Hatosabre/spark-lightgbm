@@ -64,10 +64,14 @@ object LightGBMConstants {
   val DefaultNumIterations: Int = -1
   /** The number of retries for network initialization of native lightgbm
     */
-  val NetworkRetries: Int = 3
+  val NetworkRetries: Int = 7
   /**
     * Delay prior to exponential backoff for network initialization
     */
   val InitialDelay: Long = 1000L
+  /**
+    * Maximum delay between retries for network initialization (cap for exponential backoff)
+    */
+  val MaxRetryDelay: Long = 30000L
 }
 
