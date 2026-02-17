@@ -21,7 +21,9 @@ import scala.language.existentials
   * Object to encapsulate results from mapPartitions call.
   */
 case class PartitionResult(booster: Option[LightGBMBooster],
-                           taskMeasures: TaskInstrumentationMeasures)
+                           taskMeasures: TaskInstrumentationMeasures,
+                           metricLog: Array[String],
+                           metricHistory: Array[(Int, Map[String, Double], Map[String, Double])])
 
 /**
   * Object to encapsulate all intermediate data calculations.
@@ -46,6 +48,11 @@ case class PartitionTaskTrainingState(ctx: PartitionTaskContext,
   var learningRate: Double = ctx.trainingCtx.trainingParams.generalParams.learningRate
   var bestIterationResult: Option[Int] = None
 
+  val metricLog: scala.collection.mutable.ArrayBuffer[String] =
+    scala.collection.mutable.ArrayBuffer.empty[String]
+
+  val metricHistory: scala.collection.mutable.ArrayBuffer[(Int, Map[String, Double], Map[String, Double])] =
+    scala.collection.mutable.ArrayBuffer.empty
 }
 
 /**
@@ -140,7 +147,7 @@ abstract class BasePartitionTask extends Serializable with Logging {
         // In barrier mode, empty partitions must still participate in the pre-NetworkInit barrier
         // to prevent other tasks from hanging at the barrier point
         barrierBeforeNetworkInit(ctx, taskCtx)
-        Array { PartitionResult(None, taskCtx.measures) }.toIterator
+        Array { PartitionResult(None, taskCtx.measures, Array.empty, Array.empty) }.toIterator
       } else {
         // Perform any data preparation work (portSocket holds the port occupied during this potentially long phase)
         val dataIntermediateState = preparePartitionData(taskCtx, inputRows)
@@ -167,7 +174,7 @@ abstract class BasePartitionTask extends Serializable with Logging {
           } else {
             log.info(s"Helper task ${taskCtx.taskId}, partition ${taskCtx.partitionId} finished processing rows")
             ctx.sharedState().dataPreparationDoneSignal.countDown()
-            Array { PartitionResult(None, taskCtx.measures) }.toIterator
+            Array { PartitionResult(None, taskCtx.measures, Array.empty, Array.empty) }.toIterator
           }
         } finally {
           cleanup(taskCtx)
@@ -488,9 +495,11 @@ abstract class BasePartitionTask extends Serializable with Logging {
       val modelBooster = new LightGBMBooster(model)
       // Set best iteration on booster if hit early stopping criteria in trainCore
       bestIterationResult.foreach(modelBooster.setBestIteration)
-      Iterator.single(PartitionResult(Option(modelBooster), state.ctx.measures))
+      Iterator.single(PartitionResult(Option(modelBooster), state.ctx.measures,
+        state.metricLog.toArray, state.metricHistory.toArray))
     } else {
-      Iterator.single(PartitionResult(None, state.ctx.measures))
+      Iterator.single(PartitionResult(None, state.ctx.measures,
+        state.metricLog.toArray, state.metricHistory.toArray))
     }
   }
 }
