@@ -595,7 +595,13 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
                                  networkManager)
 
     // Execute the Tasks on workers
-    val lightGBMBooster = executePartitionTasks(ctx, dataframe, measures)
+    val lightGBMBooster = try {
+      executePartitionTasks(ctx, dataframe, measures)
+    } catch {
+      case e: Exception =>
+        networkManager.shutdown()
+        throw e
+    }
 
     // Wait for network to complete (should be done by now)
     networkManager.waitForNetworkCommunicationsDone()
