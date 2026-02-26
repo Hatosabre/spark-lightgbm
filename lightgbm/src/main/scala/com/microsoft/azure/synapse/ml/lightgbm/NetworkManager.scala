@@ -366,8 +366,12 @@ case class NetworkManager(numTasks: Int,
       // Close individual worker sockets (no longer needed for initial handshake)
       closeWorkerConnections()
 
-      // Keep ServerSocket open to handle retry connections from Spark task retries
-      runMaintenanceLoop(topologyString, partitionsString)
+      // In non-barrier mode, keep ServerSocket open to handle retry connections from
+      // individual Spark task retries. In barrier mode, Spark retries the entire stage
+      // with new tasks/ports, so the cached topology would be stale and harmful.
+      if (!useBarrierExecutionMode) {
+        runMaintenanceLoop(topologyString, partitionsString)
+      }
     } catch {
       case e: Exception =>
         log.error(s"driver network communication thread failed: ${e.getMessage}", e)
