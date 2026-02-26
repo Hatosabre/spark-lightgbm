@@ -75,23 +75,15 @@ private object TrainUtils extends Serializable {
   }
 
   def updateOneIteration(state: PartitionTaskTrainingState, log: Logger): Unit = {
-    try {
-      log.debug(s"LightGBM task starting iteration ${state.iteration}")
-      val fobj = state.ctx.trainingParams.objectiveParams.fobj
-      if (fobj.isDefined) {
-        val (gradient, hessian) = fobj.get.getGradient(
-          state.booster.innerPredict(0, state.ctx.trainingCtx.isClassification),
-          state.booster.trainDataset.get)
-        state.isFinished = state.booster.updateOneIterationCustom(gradient, hessian)
-      } else {
-        state.isFinished = state.booster.updateOneIteration()
-      }
-    } catch {
-      case e: java.lang.Exception =>
-        log.warn("LightGBM reached early termination on one task," +
-          " stopping training on task. This message should rarely occur." +
-          " Inner exception: " + e.toString)
-        state.isFinished = true
+    log.debug(s"LightGBM task starting iteration ${state.iteration}")
+    val fobj = state.ctx.trainingParams.objectiveParams.fobj
+    if (fobj.isDefined) {
+      val (gradient, hessian) = fobj.get.getGradient(
+        state.booster.innerPredict(0, state.ctx.trainingCtx.isClassification),
+        state.booster.trainDataset.get)
+      state.isFinished = state.booster.updateOneIterationCustom(gradient, hessian)
+    } else {
+      state.isFinished = state.booster.updateOneIteration()
     }
   }
 
