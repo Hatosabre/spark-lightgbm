@@ -92,7 +92,7 @@ val classifier = new LightGBMClassifier()
   .setLearningRate(0.05)
   .setNumLeaves(63)
   .setDataTransferMode("streaming")  // default; "bulk" is the legacy path
-  .setMetricLogPeriod(10)            // log metrics every 10 iterations
+  .setMetricLogPeriod(10)            // log metrics every 10 iterations (default), 0 to disable
 
 val model = classifier.fit(train)
 val scored = model.transform(test)   // prediction, rawPrediction, probability
@@ -243,8 +243,8 @@ Setters follow the parameter name (`setNumLeaves`, PySpark keyword `numLeaves`).
 | `earlyStoppingRound` | 0 | stop when the metric has not improved for N rounds (0 = off) |
 | `improvementTolerance` | 0 | minimum improvement to count as progress |
 | `isProvideTrainingMetric` | false | also evaluate metrics on the training set |
-| `metricLogPeriod` | 0 | log and record metrics every N iterations (fork) |
-| `verbosity` | 1 | <0 fatal, 0 error, 1 info, >1 debug |
+| `metricLogPeriod` | 10 | log and record metrics every N iterations, 0 = off (fork) |
+| `verbosity` | -1 | <0 fatal, 0 error, 1 info, >1 debug |
 
 ### Distributed execution
 
@@ -261,7 +261,7 @@ Setters follow the parameter name (`setNumLeaves`, PySpark keyword `numLeaves`).
 | `numBatches` | 0 | split training into N sequential batches to reduce peak memory |
 | `timeout` | 1200 | seconds to wait for the network ring |
 | `defaultListenPort`, `driverListenPort` | 12400, 0 | executor and driver listen ports (0 = random) |
-| `binSampleCount`, `samplingMode`, `samplingSubsetSize` | 200000, `subset` | how many rows are sampled to define histogram bins in streaming mode |
+| `binSampleCount`, `samplingMode`, `samplingSubsetSize` | 200000, `subset`, 1000000 | how many rows are sampled to define histogram bins in streaming mode |
 | `repartitionByGroupingColumn` | true | ranker: keep each group in one partition |
 
 Operational notes:
