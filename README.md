@@ -17,7 +17,7 @@ Compared with upstream `v1.0.8-spark3.5`:
 - **Training metrics**: metrics recorded during training are logged every `metricLogPeriod` iterations and readable from the trained model (`getTrainingMetricNames`, `getTrainingMetricTrainValues`, `getTrainingMetricValidValues`).
 - **Everything unrelated to LightGBM removed**: `cognitive`, `deep-learning`, `opencv`, `vw`, the website, upstream CI and publishing setup. The SHAP explainers in `core` are kept.
 
-Branches: `v1.0.8-spark3.5` (this README, Spark 3.5 / Scala 2.12) is the mainline. The same fixes are ported to `spark3.5`, `spark4.0` and `spark4.1` (upstream v1.1.1 line).
+Branches: `v1.0.8-spark3.5` (Spark 3.5 / Scala 2.12, upstream v1.0.8) is the mainline. This branch, `spark3.5`, carries the same fixes on the upstream v1.1.1 line; `spark3.5`, `spark4.0` and `spark4.1` are kept in step.
 
 ## Environment
 
@@ -44,7 +44,7 @@ docker build --build-arg JDK_VERSION=17 -t synapseml-ci tools/docker/ci   # for 
 
 ```bash
 git clone https://github.com/Hatosabre/spark-lightgbm.git
-cd spark-lightgbm                # branch v1.0.8-spark3.5
+cd spark-lightgbm && git checkout spark3.5
 
 # fat JAR with lightgbmlib and the core module, Scala/Spark excluded
 sbt lightgbm/assembly
@@ -54,7 +54,7 @@ sbt lightgbm/assembly
 docker run --rm -v "$PWD":/workspace synapseml-ci sbt -batch lightgbm/assembly
 ```
 
-`<version>` is derived from the git tag (`git describe`), for example `1.0.8-spark3.5-28-g95e7b85`.
+`<version>` is derived from the git tag (`git describe`), for example `1.1.1-spark3.5-<n>-g<sha>`.
 
 ### Use it from Spark
 
