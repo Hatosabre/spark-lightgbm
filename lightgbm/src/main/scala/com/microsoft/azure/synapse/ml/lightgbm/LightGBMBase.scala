@@ -404,6 +404,9 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
 
     val numTasksPerExecutor = ClusterUtil.getNumTasksPerExecutor(dataset.sparkSession, log)
     val numTasks = determineNumTasks(dataset, getNumTasks, numTasksPerExecutor)
+    log.info(s"LightGBM training: numTasks=$numTasks, numTasksPerExecutor=$numTasksPerExecutor, " +
+      s"dataTransferMode=${getDataTransferMode}, configNumTasks=${getNumTasks}, " +
+      s"JVM availableProcessors=${Runtime.getRuntime.availableProcessors}")
     val sc = dataset.sparkSession.sparkContext
 
     val df = prepareDataframe(dataset, numTasks)
@@ -449,11 +452,31 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
                     measures)
   }
 
+  private def getNumExecutors(spark: SparkSession): Int = {
+    val executors = ClusterUtil.getExecutors(spark)
+    if (executors.nonEmpty) {
+      log.info(s"Retrieved ${executors.length} executors")
+      executors.length
+    } else {
+      // In local mode there are no real executors, just the driver acting as one
+      val master = spark.sparkContext.master
+      if (master.startsWith("local")) {
+        log.info("Running in local mode, using 1 executor")
+        1
+      } else {
+        // Non-local but block manager not populated yet - estimate from memory status
+        val numExecutorTasks = ClusterUtil.getNumExecutorTasks(spark, 1, log)
+        log.info(s"Estimated $numExecutorTasks executors from getNumExecutorTasks")
+        numExecutorTasks
+      }
+    }
+  }
+
   private def determineNumTasks(dataset: Dataset[_], configNumTasks: Int, numTasksPerExecutor: Int) = {
     val isStreamingMode = getDataTransferMode == LightGBMConstants.StreamingDataTransferMode
     if (isStreamingMode) {
       // Coordinator pattern: 1 task per executor
-      ClusterUtil.getNumExecutors(dataset.sparkSession, log)
+      getNumExecutors(dataset.sparkSession)
     } else if (configNumTasks > 0) configNumTasks
     else {
       val numExecutorTasks = ClusterUtil.getNumExecutorTasks(dataset.sparkSession, numTasksPerExecutor, log)
