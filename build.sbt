@@ -127,7 +127,6 @@ generatePythonDoc := {
   runCmd(activateCondaEnv ++ Seq("sphinx-build", "-b", "html", "doc", "../../../doc/pyspark"), dir)
 }
 
-
 val packageSynapseML = TaskKey[Unit]("packageSynapseML", "package all projects into SynapseML")
 packageSynapseML := {
   def writeSetupFileToTarget(dir: File): Unit = {
@@ -419,16 +418,3 @@ setupTask := {
   getDatasetsTask.value
 }
 
-val convertNotebooks = TaskKey[Unit]("convertNotebooks", "convert notebooks to markdown for website display")
-convertNotebooks := {
-  runCmd(Seq("pip", "install", "-e", "."), wd=join(baseDirectory.value, "tools/docgen"))
-  runCmd(Seq("python", "__main__.py"), wd=join(baseDirectory.value, "tools/docgen/docgen"))
-}
-
-val testWebsiteDocs = TaskKey[Unit]("testWebsiteDocs",
-  "test code blocks inside markdowns under folder website/docs/documentation")
-testWebsiteDocs := {
-  runCmd(
-    Seq("python", s"${join(baseDirectory.value, "website/doctest.py")}", version.value)
-  )
-}
