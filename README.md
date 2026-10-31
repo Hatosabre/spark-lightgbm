@@ -1,342 +1,281 @@
-![SynapseML](https://mmlspark.azureedge.net/icons/mmlspark.svg)
+# spark-lightgbm
 
-# Synapse Machine Learning
+> **About this fork**
+> **spark-lightgbm** is a personal fork of [microsoft/SynapseML](https://github.com/microsoft/SynapseML) maintained by Hatosabre, trimmed down to the LightGBM module (`core` + `lightgbm`) with fixes for distributed training. It is not affiliated with Microsoft. The original code is Copyright (c) Microsoft Corporation and the fork's modifications are Copyright (c) 2026 Hatosabre; everything is distributed under the MIT License (see [LICENSE](LICENSE)). Issues and pull requests are not accepted here; please use the upstream project.
+>
+> spark-lightgbm は microsoft/SynapseML の個人用フォークで、LightGBM モジュールに絞り分散学習の修正を加えたものです。Microsoft とは無関係です。元コードの著作権は Microsoft Corporation、改変部分の著作権は Hatosabre にあり、全体を MIT ライセンスで配布します。Issue / Pull Request は受け付けていません。
 
-SynapseML (previously known as MMLSpark), is an open-source library that simplifies the creation of massively scalable machine learning (ML) pipelines. SynapseML provides simple, composable, and distributed APIs for a wide variety of different machine learning tasks such as text analytics, vision, anomaly detection, and many others. SynapseML is built on the [Apache Spark distributed computing framework](https://spark.apache.org/) and shares the same API as the [SparkML/MLLib library](https://spark.apache.org/mllib/), allowing you to seamlessly embed SynapseML models into existing Apache Spark workflows.
+Distributed [LightGBM](https://github.com/microsoft/LightGBM) training and inference on Apache Spark, exposed as SparkML estimators (`LightGBMClassifier`, `LightGBMRegressor`, `LightGBMRanker`), with per-row TreeSHAP contributions from the native booster.
 
-With SynapseML, you can build scalable and intelligent systems to solve challenges in domains such as anomaly detection, computer vision, deep learning, text analytics, and others. SynapseML can train and evaluate models on single-node, multi-node, and elastically resizable clusters of computers. This lets you scale your work without wasting resources. SynapseML is usable across Python, R, Scala, Java, and .NET. Furthermore, its API abstracts over a wide variety of databases, file systems, and cloud data stores to simplify experiments no matter where data is located.
+## What changed in this fork
 
-SynapseML requires Scala 2.12, Spark 3.4+, and Python 3.8+.  
+Compared with upstream `v1.0.8-spark3.5`:
 
-| Topics  | Links                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| :------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Build   | [![Build Status](https://msdata.visualstudio.com/A365/_apis/build/status/microsoft.SynapseML?branchName=master)](https://msdata.visualstudio.com/A365/_build/latest?definitionId=17563&branchName=master) [![codecov](https://codecov.io/gh/Microsoft/SynapseML/branch/master/graph/badge.svg)](https://codecov.io/gh/Microsoft/SynapseML) [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)                     |
-| Version | [![Version](https://img.shields.io/badge/version-1.1.1-blue)](https://github.com/Microsoft/SynapseML/releases) [![Release Notes](https://img.shields.io/badge/release-notes-blue)](https://github.com/Microsoft/SynapseML/releases) [![Snapshot Version](https://mmlspark.blob.core.windows.net/icons/badges/master_version3.svg)](#sbt)                                                                                                                                       |
-| Docs    | [![Website](https://img.shields.io/badge/SynapseML-Website-blue)](https://aka.ms/spark) [![Scala Docs](https://img.shields.io/static/v1?label=api%20docs&message=scala&color=blue&logo=scala)](https://mmlspark.blob.core.windows.net/docs/1.1.1/scala/index.html#package) [![PySpark Docs](https://img.shields.io/static/v1?label=api%20docs&message=python&color=blue&logo=python)](https://mmlspark.blob.core.windows.net/docs/1.1.1/pyspark/index.html) [![Academic Paper](https://img.shields.io/badge/academic-paper-7fdcf7)](https://arxiv.org/abs/1810.08744) |
-| Support | [![Gitter](https://badges.gitter.im/Microsoft/MMLSpark.svg)](https://gitter.im/Microsoft/MMLSpark?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge) [![Mail](https://img.shields.io/badge/mail-synapseml--support-brightgreen)](mailto:synapseml-support@microsoft.com)                                                                                                                                                                                                  |
-| Binder  | [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/microsoft/SynapseML/v1.1.1?labpath=notebooks%2Ffeatures)                                                                                                                                                                                                                                                                                                                                           |
-| Usage | [![Downloads](https://static.pepy.tech/badge/synapseml)](https://pepy.tech/project/synapseml) |
-<!-- markdownlint-disable MD033 -->
-<details open>
-<summary>
-<strong><em>Table of Contents</em></strong>
-</summary>
+- **Connection refused fix**: the probed executor port is held open until `LGBM_NetworkInit`, closing the race in which the OS could hand the port to another process. Network retries are raised from 3 to 7 with capped exponential backoff.
+- **Driver maintenance mode**: after the network topology is built, the driver keeps answering retried tasks with the cached topology instead of failing them.
+- **Coordinator pattern for streaming mode**: one task per executor materializes its partition, pushes rows into a single native dataset and runs training; the MAIN/HELPER task split and the stale `partitionCounts` are gone. Streaming mode always uses barrier execution.
+- **Training metrics**: metrics recorded during training are logged every `metricLogPeriod` iterations and readable from the trained model (`getTrainingMetricNames`, `getTrainingMetricTrainValues`, `getTrainingMetricValidValues`).
+- **Everything unrelated to LightGBM removed**: `cognitive`, `deep-learning`, `opencv`, `vw`, the website, upstream CI and publishing setup. The SHAP explainers in `core` are kept.
 
-- [Synapse Machine Learning](#synapse-machine-learning)
-  - [Features](#features)
-  - [Documentation and Examples](#documentation-and-examples)
-  - [Setup and installation](#setup-and-installation)
-    - [Microsoft Fabric](#microsoft-fabric)
-    - [Synapse Analytics](#synapse-analytics)
-    - [Databricks](#databricks)
-    - [Python Standalone](#python-standalone)
-    - [Spark Submit](#spark-submit)
-    - [SBT](#sbt)
-    - [Apache Livy and HDInsight](#apache-livy-and-hdinsight)
-    - [Docker](#docker)
-    - [R](#r)
-    - [Building from source](#building-from-source)
-  - [Papers](#papers)
-  - [Learn More](#learn-more)
-  - [Contributing \& feedback](#contributing--feedback)
-  - [Other relevant projects](#other-relevant-projects)
+Branches: `v1.0.8-spark3.5` (Spark 3.5 / Scala 2.12, upstream v1.0.8) is the mainline. This branch, `spark4.1`, carries the same fixes on the upstream v1.1.1 line; `spark3.5`, `spark4.0` and `spark4.1` are kept in step.
 
-</details>
-<!-- markdownlint-enable MD033 -->
+## Environment
 
-## Features
+| | `v1.0.8-spark3.5` | `spark3.5` | `spark4.0` / `spark4.1` |
+|---|---|---|---|
+| Spark | 3.5.0 | 3.5.x | 4.0 / 4.1 |
+| Scala | 2.12.17 | 2.12.17 | 2.13.16 / 2.13.17 |
+| JDK to build and test | 11 | 11 | 17 (Spark 4 requires 17+) |
+| sbt | 1.10.11 | 1.10.11 | 1.10.11 |
+| Native LightGBM (`lightgbmlib`) | 3.3.510 | 3.3.510 | 3.3.510 |
 
-<!-- markdownlint-disable MD033 -->
-| <img width="800" src="https://mmlspark.blob.core.windows.net/graphics/Readme/vw-blue-dark-orange.svg"> |                     <img width="800"  src="https://mmlspark.blob.core.windows.net/graphics/Readme/cog_services_on_spark_2.svg">                     | <img width="800"  src="https://mmlspark.blob.core.windows.net/graphics/Readme/decision_tree_recolor.png"> | <img width="800" src="https://mmlspark.blob.core.windows.net/graphics/Readme/mmlspark_serving_recolor.svg"> |
-| :----------------------------------------------------------------------------------------------------: | :-------------------------------------------------------------------------------------------------------------------------------------------------: | :-------------------------------------------------------------------------------------------------------: | :---------------------------------------------------------------------------------------------------------: |
-|      [**Vowpal Wabbit on Spark**](https://microsoft.github.io/SynapseML/docs/Explore%20Algorithms/Vowpal%20Wabbit/Overview/)       | [**The Cognitive Services for Big Data**](https://microsoft.github.io/SynapseML/docs/Explore%20Algorithms/AI%20Services/Overview/) |       [**LightGBM on Spark**](https://microsoft.github.io/SynapseML/docs/Explore%20Algorithms/LightGBM/Overview/)        |        [**Spark Serving**](https://microsoft.github.io/SynapseML/docs/Deploy%20Models/Overview/)        |
-|                               Fast, Sparse, and Effective Text Analytics                               |                        Leverage the Microsoft Cognitive Services at Unprecedented Scales in your existing SparkML pipelines                         |                               Train Gradient Boosted Machines with LightGBM                               |                  Serve any Spark Computation as a Web Service with Sub-Millisecond Latency                  |
+Scala 2.12.17 cannot build its compiler bridge on JDK 21, so use JDK 11 (or 17) for the 2.12 branches. The native library needs the OpenMP runtime (`libgomp1` on Debian/Ubuntu) on every executor.
 
-|                     <img width="800" src="https://mmlspark.blob.core.windows.net/graphics/Readme/microservice_recolor.png">                      | <img width="800" src="https://mmlspark.blob.core.windows.net/graphics/emails/onnxai-ar21_crop.svg"> |                  <img width="800"  src="https://mmlspark.blob.core.windows.net/graphics/emails/scales.svg">                   |              <img width="800"  src="https://mmlspark.blob.core.windows.net/graphics/Readme/bindings.png">               |
-| :----------------------------------------------------------------------------------------------------------------------------------------------: | :-------------------------------------------------------------------------------------------------: | :---------------------------------------------------------------------------------------------------------------------------: |:-----------------------------------------------------------------------------------------------------------------------:|
-| [**HTTP on Spark**](https://microsoft.github.io/SynapseML/docs/Explore%20Algorithms/AI%20Services/Overview/#arbitrary-web-apis) |        [**ONNX on Spark**](https://microsoft.github.io/SynapseML/docs/Explore%20Algorithms/Deep%20Learning/ONNX/)         | [**Responsible AI**](https://microsoft.github.io/SynapseML/docs/Explore%20Algorithms/Responsible%20AI/Interpreting%20Model%20Predictions/) |                                          [**Spark Binding Autogeneration**](https://microsoft.github.io/SynapseML/docs/Reference/Developer%20Setup/#packagepython)                                           |
-|                       An Integration Between Spark and the HTTP Protocol, enabling Distributed Microservice Orchestration                        |                    Distributed and Hardware Accelerated Model Inference on Spark                    |                                    Understand Opaque-box Models and Measure Dataset Biases                                    |                             Automatically Generate Spark bindings for PySpark and SparklyR                              |
-
-|                 <img width="150" src="https://mmlspark.blob.core.windows.net/graphics/emails/isolation forest 3.svg">                 |                          <img width="150" src="https://mmlspark.blob.core.windows.net/graphics/emails/cyberml.svg">                           |                     <img width="150" src="https://mmlspark.blob.core.windows.net/graphics/emails/conditional_knn.svg">                     |
-| :-----------------------------------------------------------------------------------------------------------------------------------: | :-------------------------------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------------------: |
-| [**Isolation Forest on Spark**](https://microsoft.github.io/SynapseML/docs/Explore%20Algorithms/Anomaly%20Detection/Quickstart%20-%20Isolation%20Forests/) | [**CyberML**](https://microsoft.github.io/SynapseML/docs/Explore%20Algorithms/Other%20Algorithms/Cyber%20ML/) | [**Conditional KNN**](https://microsoft.github.io/SynapseML/docs/Explore%20Algorithms/Other%20Algorithms/Quickstart%20-%20Exploring%20Art%20Across%20Cultures/) |
-|                                                Distributed Nonlinear Outlier Detection                                                |                                                   Machine Learning Tools for Cyber Security                                                   |                                                Scalable KNN Models with Conditional Queries                                                |
-<!-- markdownlint-enable MD033 -->
-
-## Documentation and Examples
-
-For quickstarts, documentation, demos, and examples please see our [website](https://aka.ms/spark).
-
-## Setup and installation
-
-First select the correct platform that you are installing SynapseML into:
-<!--ts-->
-- [Synapse Machine Learning](#synapse-machine-learning)
-  - [Features](#features)
-  - [Documentation and Examples](#documentation-and-examples)
-  - [Setup and installation](#setup-and-installation)
-    - [Microsoft Fabric](#microsoft-fabric)
-    - [Synapse Analytics](#synapse-analytics)
-    - [Databricks](#databricks)
-    - [Python Standalone](#python-standalone)
-    - [Spark Submit](#spark-submit)
-    - [SBT](#sbt)
-    - [Apache Livy and HDInsight](#apache-livy-and-hdinsight)
-    - [Docker](#docker)
-    - [R](#r)
-    - [Building from source](#building-from-source)
-  - [Papers](#papers)
-  - [Learn More](#learn-more)
-  - [Contributing \& feedback](#contributing--feedback)
-  - [Other relevant projects](#other-relevant-projects)
-<!--te-->
-
-
-
-### Microsoft Fabric
-
-In Microsoft Fabric notebooks SynapseML is already installed. To change the version please place the following in the first cell of your notebook.
-
+The easiest reproducible environment is the CI image:
 
 ```bash
-%%configure -f
-{
-  "name": "synapseml",
-  "conf": {
-      "spark.jars.packages": "com.microsoft.azure:synapseml_2.12:<THE_SYNAPSEML_VERSION_YOU_WANT>",
-      "spark.jars.repositories": "https://mmlspark.azureedge.net/maven",
-      "spark.jars.excludes": "org.scala-lang:scala-reflect,org.apache.spark:spark-tags_2.12,org.scalactic:scalactic_2.12,org.scalatest:scalatest_2.12,com.fasterxml.jackson.core:jackson-databind",
-      "spark.yarn.user.classpath.first": "true",
-      "spark.sql.parquet.enableVectorizedReader": "false"
-  }
-}
+docker build -t synapseml-ci tools/docker/ci            # JDK 11 + sbt 1.10.11 + libgomp1
+docker build --build-arg JDK_VERSION=17 -t synapseml-ci tools/docker/ci   # for spark4.x branches
 ```
 
+## Setup
 
-
-
-### Synapse Analytics
-
-In Azure Synapse notebooks please place the following in the first cell of your notebook. 
-
-- For Spark 3.5 Pools:
+### Build the JAR
 
 ```bash
-%%configure -f
-{
-  "name": "synapseml",
-  "conf": {
-      "spark.jars.packages": "com.microsoft.azure:synapseml_2.12:1.1.1",
-      "spark.jars.repositories": "https://mmlspark.azureedge.net/maven",
-      "spark.jars.excludes": "org.scala-lang:scala-reflect,org.apache.spark:spark-tags_2.12,org.scalactic:scalactic_2.12,org.scalatest:scalatest_2.12,com.fasterxml.jackson.core:jackson-databind",
-      "spark.yarn.user.classpath.first": "true",
-      "spark.sql.parquet.enableVectorizedReader": "false"
-  }
-}
+git clone https://github.com/Hatosabre/spark-lightgbm.git
+cd spark-lightgbm && git checkout spark4.1
+
+# fat JAR with lightgbmlib and the core module, Scala/Spark excluded
+sbt lightgbm/assembly
+# -> lightgbm/target/scala-2.13/synapseml-lightgbm-assembly-<version>.jar
+
+# or inside Docker
+docker run --rm -v "$PWD":/workspace synapseml-ci sbt -batch lightgbm/assembly
 ```
 
-- For Spark 3.4 Pools:
+`<version>` is derived from the git tag (`git describe`), for example `1.1.1-spark4.1-<n>-g<sha>`.
+
+### Use it from Spark
+
+Put the assembly JAR on the driver and executor classpath. It must come before any upstream `synapseml` JAR.
 
 ```bash
-%%configure -f
-{
-  "name": "synapseml",
-  "conf": {
-      "spark.jars.packages": "com.microsoft.azure:synapseml_2.12:1.0.15",
-      "spark.jars.repositories": "https://mmlspark.azureedge.net/maven",
-      "spark.jars.excludes": "org.scala-lang:scala-reflect,org.apache.spark:spark-tags_2.12,org.scalactic:scalactic_2.12,org.scalatest:scalatest_2.12,com.fasterxml.jackson.core:jackson-databind",
-      "spark.yarn.user.classpath.first": "true",
-      "spark.sql.parquet.enableVectorizedReader": "false"
-  }
-}
+spark-submit --jars synapseml-lightgbm-assembly-<version>.jar my_job.py
+# or
+spark-shell --jars synapseml-lightgbm-assembly-<version>.jar
 ```
 
-- For Spark 3.3 Pools:
+For PySpark the Python wrappers are thin py4j shims over the JVM classes. Either build them with `sbt lightgbm/packagePython` (needs the conda environment from `environment.yml`) or install the upstream wheel `synapseml==1.0.8` and let the fork's JAR override the JVM side; methods added by this fork are reachable through `model._java_obj`.
+
+### Verify
 
 ```bash
-%%configure -f
-{
-  "name": "synapseml",
-  "conf": {
-      "spark.jars.packages": "com.microsoft.azure:synapseml_2.12:0.11.4-spark3.3",
-      "spark.jars.repositories": "https://mmlspark.azureedge.net/maven",
-      "spark.jars.excludes": "org.scala-lang:scala-reflect,org.apache.spark:spark-tags_2.12,org.scalactic:scalactic_2.12,org.scalatest:scalatest_2.12,com.fasterxml.jackson.core:jackson-databind",
-      "spark.yarn.user.classpath.first": "true",
-      "spark.sql.parquet.enableVectorizedReader": "false"
-  }
-}
+sbt lightgbm/Test/compile
+sbt getDatasets "lightgbm/testOnly *VerifyCoordinatorAccuracy *VerifyLightGBMClassifierStream"
 ```
 
+The same two commands run in GitHub Actions (`.github/workflows/ci.yml`) inside the CI image.
 
+## Usage
 
-To install at the pool level instead of the notebook level [add the spark properties listed above to the pool configuration](https://techcommunity.microsoft.com/t5/azure-synapse-analytics-blog/how-to-set-spark-pyspark-custom-configs-in-synapse-workspace/ba-p/2114434).
-
-### Databricks
-
-To install SynapseML on the [Databricks
-cloud](http://community.cloud.databricks.com), create a new [library from Maven
-coordinates](https://docs.databricks.com/user-guide/libraries.html#libraries-from-maven-pypi-or-spark-packages)
-in your workspace.
-
-For the coordinates use: `com.microsoft.azure:synapseml_2.12:1.1.1`
-with the resolver: `https://mmlspark.azureedge.net/maven`. Ensure this library is
-attached to your target cluster(s).
-
-Finally, ensure that your Spark cluster has at least Spark 3.2 and Scala 2.12. If you encounter Netty dependency issues please use DBR 10.1.
-
-You can use SynapseML in both your Scala and PySpark notebooks. To get started with our example notebooks import the following databricks archive:
-
-`https://mmlspark.blob.core.windows.net/dbcs/SynapseMLExamplesv1.1.1.dbc`
-
-### Python Standalone
-
-To try out SynapseML on a Python (or Conda) installation you can get Spark
-installed via pip with `pip install pyspark`.  You can then use `pyspark` as in
-the above example, or from python:
-
-```python
-import pyspark
-spark = pyspark.sql.SparkSession.builder.appName("MyApp") \
-            .config("spark.jars.packages", "com.microsoft.azure:synapseml_2.12:1.1.1") \
-            .getOrCreate()
-import synapse.ml
-```
-
-### Spark Submit
-
-SynapseML can be conveniently installed on existing Spark clusters via the
-`--packages` option, examples:
-
-```bash
-spark-shell --packages com.microsoft.azure:synapseml_2.12:1.1.1
-pyspark --packages com.microsoft.azure:synapseml_2.12:1.1.1
-spark-submit --packages com.microsoft.azure:synapseml_2.12:1.1.1 MyApp.jar
-```
-
-### SBT
-
-If you are building a Spark application in Scala, add the following lines to
-your `build.sbt`:
+### Scala
 
 ```scala
-libraryDependencies += "com.microsoft.azure" % "synapseml_2.12" % "1.1.1"
+import com.microsoft.azure.synapse.ml.lightgbm.{LightGBMClassifier, LightGBMRegressor}
+
+val classifier = new LightGBMClassifier()
+  .setFeaturesCol("features")        // a Vector column, e.g. from VectorAssembler or Featurize
+  .setLabelCol("label")
+  .setObjective("binary")
+  .setNumIterations(200)
+  .setLearningRate(0.05)
+  .setNumLeaves(63)
+  .setDataTransferMode("streaming")  // default; "bulk" is the legacy path
+  .setMetricLogPeriod(10)            // log metrics every 10 iterations (default), 0 to disable
+
+val model = classifier.fit(train)
+val scored = model.transform(test)   // prediction, rawPrediction, probability
+
+val regressor = new LightGBMRegressor()
+  .setObjective("quantile").setAlpha(0.3)
+  .setNumIterations(100).setNumLeaves(31)
 ```
 
-### Apache Livy and HDInsight
+### PySpark
 
-To install SynapseML from within a Jupyter notebook served by Apache Livy the following configure magic can be used. You will need to start a new session after this configure cell is executed.
+```python
+from synapse.ml.lightgbm import LightGBMClassifier, LightGBMRegressor
 
-Excluding certain packages from the library may be necessary due to current issues with Livy 0.5.
+model = LightGBMClassifier(
+    featuresCol="features", labelCol="label", objective="binary",
+    numIterations=200, learningRate=0.05, numLeaves=63,
+    dataTransferMode="streaming",
+).fit(train)
 
-```bash
-%%configure -f
-{
-    "name": "synapseml",
-    "conf": {
-        "spark.jars.packages": "com.microsoft.azure:synapseml_2.12:1.1.1",
-        "spark.jars.excludes": "org.scala-lang:scala-reflect,org.apache.spark:spark-tags_2.12,org.scalactic:scalactic_2.12,org.scalatest:scalatest_2.12,com.fasterxml.jackson.core:jackson-databind"
-    }
-}
+scored = model.transform(test)
 ```
 
-### Docker
+### Validation data and early stopping
 
-The easiest way to evaluate SynapseML is via our pre-built Docker container.  To
-do so, run the following command:
+Mark validation rows with a boolean column and pass its name; early stopping and the validation metrics use it.
 
-```bash
-docker run -it -p 8888:8888 -e ACCEPT_EULA=yes mcr.microsoft.com/mmlspark/release jupyter notebook
+```scala
+val df = data.withColumn("isVal", rand() < 0.2)
+val m = new LightGBMClassifier()
+  .setValidationIndicatorCol("isVal")
+  .setEarlyStoppingRound(20)
+  .setMetric("auc")
+  .fit(df)
 ```
 
-Navigate to <http://localhost:8888/> in your web browser to run the sample
-notebooks.  See the [documentation](https://microsoft.github.io/SynapseML/docs/Reference/Docker%20Setup/) for more on Docker use.
+### Training metrics (added in this fork)
 
-> To read the EULA for using the docker image, run `docker run -it -p 8888:8888 mcr.microsoft.com/mmlspark/release eula`
+```scala
+val names = model.getTrainingMetricNames()                   // e.g. Array("binary_logloss", "auc")
+val iters = model.getTrainingMetricIterations()              // iterations at which metrics were recorded
+val trainLoss = model.getTrainingMetricTrainValues("binary_logloss")
+val validAuc  = model.getTrainingMetricValidValues("auc")    // NaN where no validation data
+```
 
-### R
+From PySpark: `model._java_obj.getTrainingMetricTrainValues("binary_logloss")`.
 
-To try out SynapseML using the R autogenerated wrappers [see our
-instructions](https://microsoft.github.io/SynapseML/docs/Reference/R%20Setup/).  Note: This feature is still under development
-and some necessary custom wrappers may be missing.
+### Feature importance and leaf indices
 
-### Building from source
+```scala
+model.getFeatureImportances("gain")   // or "split"; one value per feature
+model.setLeafPredictionCol("leaves").transform(test)   // predicted leaf index per tree
+```
 
-SynapseML has recently transitioned to a new build infrastructure.
-For detailed developer docs please see the [Developer Readme](https://microsoft.github.io/SynapseML/docs/Reference/Developer%20Setup/)
+### Save and load
 
-If you are an existing synapsemldeveloper, you will need to reconfigure your
-development setup. We now support platform independent development and
-better integrate with intellij and SBT.
- If you encounter issues please reach out to our support email! 
+Models are SparkML `MLWritable`, and the native booster can be exported on its own.
 
-## Papers
+```scala
+model.write.overwrite().save("/path/to/model")
+val loaded = LightGBMClassificationModel.load("/path/to/model")
+model.saveNativeModel("/path/to/model.txt", overwrite = true)   // plain LightGBM text model
+```
 
-- [Large Scale Intelligent Microservices](https://arxiv.org/abs/2009.08044)
+### Passing any other LightGBM parameter
 
-- [Conditional Image Retrieval](https://arxiv.org/abs/2007.07177)
+Parameters without a setter can be passed as a raw string; they are appended to the native config and take precedence over explicit setters.
 
-- [MMLSpark: Unifying Machine Learning Ecosystems at Massive Scales](https://arxiv.org/abs/1810.08744)
+```scala
+.setPassThroughArgs("force_row_wise=true min_sum_hessian_in_leaf=2e-3")
+```
 
-- [Flexible and Scalable Deep Learning with SynapseML](https://arxiv.org/abs/1804.04031)
+## TreeSHAP
 
-- [Large-Scale Automatic Audiobook Creation](https://arxiv.org/abs/2309.03926) 
+The native booster computes exact TreeSHAP contributions. Set an output column on the trained model and every row gets a dense vector of SHAP values:
 
-## Learn More
+```scala
+val shapped = model.setFeaturesShapCol("shap").transform(test)
+shapped.select("shap").show(1, truncate = false)
+```
 
-- Visit our [website].
+```python
+shapped = model.setFeaturesShapCol("shap").transform(test)
+```
 
-- Watch our keynote demos at [the Spark+AI Summit 2019], [the Spark+AI European Summit 2018], [the Spark+AI Summit 2018] and [SynapseML at the Spark Summit].
+Layout of the `shap` vector:
 
-- See how SynapseML is used to [help endangered species].
+- binary classification and regression: `numFeatures + 1` values; the last element is the expected value (bias). Summing all elements gives the raw margin for the row.
+- multiclass: `numClass * (numFeatures + 1)` values, class by class, each block ending with that class's bias.
 
-- Explore generative adversarial artwork in [our collaboration with The MET and MIT].
+For a single instance without a DataFrame: `model.getFeatureShaps(features: Vector)` returns the same array; `getDenseFeatureShaps` / `getSparseFeatureShaps` are the PySpark-friendly variants.
 
-- Explore [our collaboration with Apache Spark] on image analysis.
+Model-agnostic KernelSHAP (`TabularSHAP`, `VectorSHAP`, `TextSHAP` in `com.microsoft.azure.synapse.ml.explainers`) is still available in `core` for comparing against other models, but for LightGBM the native TreeSHAP above is exact and far cheaper.
 
-[website]: https://microsoft.github.io/SynapseML/ "aka.ms/spark"
+## Hyperparameters
 
-[the Spark+AI Summit 2018]: https://databricks.com/sparkaisummit/north-america/spark-summit-2018-keynotes#Intelligent-cloud "Developing for the Intelligent Cloud and Intelligent Edge"
+Setters follow the parameter name (`setNumLeaves`, PySpark keyword `numLeaves`). Defaults are the fork's current values.
 
-[the Spark+AI Summit 2019]: https://youtu.be/T_fs4C0aqD0?t=425
+### Tree structure and boosting
 
-[the Spark+AI European Summit 2018]: https://youtu.be/N3ozCZXeOeU?t=472
+| Parameter | Default | Meaning |
+|---|---|---|
+| `objective` | `regression` | `binary`, `multiclass`, `regression`, `quantile`, `huber`, `tweedie`, `lambdarank`, ... (classifier and ranker set their own) |
+| `boostingType` | `gbdt` | `gbdt`, `rf`, `dart`, `goss` |
+| `numIterations` | 100 | number of boosting rounds (`num_class * numIterations` trees for multiclass) |
+| `learningRate` | 0.1 | shrinkage rate |
+| `numLeaves` | 31 | max leaves per tree; the main capacity knob |
+| `maxDepth` | -1 | max tree depth, -1 = unlimited |
+| `minDataInLeaf` | 20 | min rows per leaf; raise to fight overfitting |
+| `minSumHessianInLeaf` | 1e-3 | min hessian sum per leaf |
+| `minGainToSplit` | 0 | min gain to make a split |
+| `maxBin` | 255 | histogram bins per feature |
+| `maxDeltaStep` | 0 | caps leaf output; useful for `poisson` / unbalanced targets |
 
-[help endangered species]: https://www.microsoft.com/en-us/ai/ai-lab-stories?activetab=pivot1:primaryr3 "Identifying snow leopards with AI"
+### Regularization and sampling
 
-[our collaboration with The MET and MIT]: https://www.microsoft.com/en-us/ai/ai-lab-stories?activetab=pivot1:primaryr4 "Generative art at the MET"
+| Parameter | Default | Meaning |
+|---|---|---|
+| `lambdaL1`, `lambdaL2` | 0, 0 | L1 / L2 regularization on leaf values |
+| `featureFraction` | 1.0 | fraction of features sampled per tree |
+| `featureFractionByNode` | 1.0 | fraction of features sampled per node |
+| `baggingFraction`, `baggingFreq` | 1.0, 0 | row subsampling and how often to resample (`baggingFreq > 0` enables it) |
+| `posBaggingFraction`, `negBaggingFraction` | 1.0, 1.0 | class-wise bagging for binary tasks |
+| `dropRate`, `maxDrop`, `skipDrop`, `uniformDrop`, `xGBoostDartMode` | | DART-only controls |
+| `topRate`, `otherRate` | 0.2, 0.1 | GOSS-only retain ratios |
+| `seed` | | master seed; `baggingSeed`, `featureFractionSeed`, `dataRandomSeed`, `objectiveSeed`, `dropSeed`, `extraSeed` can be set individually |
+| `deterministic` | false | reproducible histograms on CPU at some speed cost |
 
-[our collaboration with Apache Spark]: https://blogs.technet.microsoft.com/machinelearning/2018/03/05/image-data-support-in-apache-spark/ "Image Data Support in Apache Spark"
+### Task-specific
 
-[SynapseML at the Spark Summit]: https://databricks.com/session/mmlspark-lessons-from-building-a-sparkml-compatible-machine-learning-library-for-apache-spark "MMLSpark: Lessons from Building a SparkML-Compatible Machine Learning Library for Apache Spark"
+| Parameter | Estimator | Meaning |
+|---|---|---|
+| `isUnbalance` | classifier | reweight positive class for unbalanced binary data |
+| `numClass` / `maxNumClasses` | classifier | multiclass count (inferred from the label when `multiclass`) |
+| `alpha` | regressor | quantile for `quantile`, delta for `huber` |
+| `tweedieVariancePower` | regressor | power for `tweedie` |
+| `groupCol`, `evalAt` | ranker | query group column and NDCG/MAP cut-offs |
+| `weightCol`, `initScoreCol` | all | row weights and initial scores |
+| `categoricalSlotIndexes`, `categoricalSlotNames`, `catl2`, `minDataPerGroup` | all | categorical features (by index or slot name) and their regularization |
+| `monotoneConstraints`, `monotoneConstraintsMethod`, `monotonePenalty` | all | per-feature monotonic constraints |
 
-## Contributing & feedback
+### Validation, metrics and early stopping
 
-This project has adopted the [Microsoft Open Source Code of Conduct].  For more
-information see the [Code of Conduct FAQ] or contact
-[opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional
-questions or comments. 
+| Parameter | Default | Meaning |
+|---|---|---|
+| `validationIndicatorCol` | | boolean column marking validation rows |
+| `metric` | | `auc`, `binary_logloss`, `multi_logloss`, `l2`, `ndcg`, ... |
+| `earlyStoppingRound` | 0 | stop when the metric has not improved for N rounds (0 = off) |
+| `improvementTolerance` | 0 | minimum improvement to count as progress |
+| `isProvideTrainingMetric` | false | also evaluate metrics on the training set |
+| `metricLogPeriod` | 10 | log and record metrics every N iterations, 0 = off (fork) |
+| `verbosity` | -1 | <0 fatal, 0 error, 1 info, >1 debug |
 
-[Microsoft Open Source Code of Conduct]: https://opensource.microsoft.com/codeofconduct/
+### Distributed execution
 
-[Code of Conduct FAQ]: https://opensource.microsoft.com/codeofconduct/faq/
+| Parameter | Default | Meaning |
+|---|---|---|
+| `dataTransferMode` | `streaming` | `streaming`: one native dataset per executor fed in micro-batches through the Coordinator task (barrier mode, 1 task per executor). `bulk`: legacy, copies the whole partition into executor memory first |
+| `microBatchSize` | 100 | rows per push in streaming mode; lower it for very wide data |
+| `maxStreamingOMPThreads` | 16 | OpenMP threads for the native push; the fork raises it to at least the executor's core count to avoid buffer overlap |
+| `numTasks` | 0 | number of Spark tasks for training; 0 = derived from the cluster (streaming: executors, bulk: executors x cores) |
+| `numThreads` | 0 | native threads per executor; 0 = all cores |
+| `useBarrierExecutionMode` | false | barrier scheduling for bulk mode (streaming always uses it) |
+| `useSingleDatasetMode` | true | bulk mode only: one dataset per executor instead of per partition |
+| `parallelism` | `data_parallel` | `data_parallel` or `voting_parallel` (`topK` applies to voting) |
+| `numBatches` | 0 | split training into N sequential batches to reduce peak memory |
+| `timeout` | 1200 | seconds to wait for the network ring |
+| `defaultListenPort`, `driverListenPort` | 12400, 0 | executor and driver listen ports (0 = random) |
+| `binSampleCount`, `samplingMode`, `samplingSubsetSize` | 200000, `subset`, 1000000 | how many rows are sampled to define histogram bins in streaming mode |
+| `repartitionByGroupingColumn` | true | ranker: keep each group in one partition |
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+Operational notes:
 
-To give feedback and/or report an issue, open a [GitHub
-Issue](https://help.github.com/articles/creating-an-issue/).
+- Turn off dynamic allocation and autoscaling for the duration of `fit`; the native ring assumes a fixed set of executors.
+- Keep the number of partitions of the training DataFrame at or below `numTasks`; the estimator repartitions when necessary.
+- Every executor must be able to open TCP connections to every other executor on `defaultListenPort` and following ports, and to the driver on `driverListenPort`.
 
-## Other relevant projects
+## Layout
 
-- [Vowpal Wabbit](https://github.com/VowpalWabbit/vowpal_wabbit)
-
-- [LightGBM](https://github.com/Microsoft/LightGBM)
-
-- [DMTK: Microsoft Distributed Machine Learning Toolkit](https://github.com/Microsoft/DMTK)
-
-- [Recommenders](https://github.com/recommenders-team/Recommenders)
-
-- [JPMML-SparkML plugin for converting SynapseML LightGBM models to PMML](https://github.com/alipay/jpmml-sparkml-lightgbm)
-
-- [Microsoft Cognitive Toolkit](https://github.com/Microsoft/CNTK)
-
-_Apache®, Apache Spark, and Spark® are either registered trademarks or trademarks of the Apache Software Foundation in the United States and/or other countries._
+```
+core/       shared SparkML utilities, featurization, explainers (KernelSHAP)
+lightgbm/   LightGBM estimators, models, NetworkManager, partition tasks
+project/    sbt build definition and Python/R wrapper code generation
+docs/       LightGBM, explainer and tuning notebooks kept from upstream
+tools/docker/   CI image (tools/docker/ci) and demo images
+```

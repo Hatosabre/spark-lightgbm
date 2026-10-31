@@ -1,0 +1,32 @@
+name: Feature request
+description: LightGBM モジュールへの機能追加・改善の提案 / Propose a change to the LightGBM module
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: 何に困っているか、現状の挙動
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: どう変えたいか。影響するクラス (NetworkManager, CoordinatorPartitionTask, LightGBMBase など) があれば書く
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: branches
+    attributes:
+      label: Target branches
+      multiple: true
+      options:
+        - v1.0.8-spark3.5
+        - spark3.5
+        - spark4.0
+        - spark4.1

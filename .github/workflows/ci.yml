@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [ "spark4.1" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Build and test LightGBM (Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache sbt / coursier / ivy
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/.ivy2
+            ~/.sbt
+          key: ci-${{ runner.os }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt') }}
+          restore-keys: ci-${{ runner.os }}-
+
+      - name: Build CI image
+        run: docker build --build-arg JDK_VERSION=17 -t synapseml-ci tools/docker/ci
+
+      - name: Compile
+        run: |
+          mkdir -p ~/.cache/coursier ~/.ivy2 ~/.sbt
+          docker run --rm \
+            -v "$PWD":/workspace \
+            -v ~/.cache/coursier:/root/.cache/coursier \
+            -v ~/.ivy2:/root/.ivy2 \
+            -v ~/.sbt:/root/.sbt \
+            synapseml-ci sbt -batch "Test/compile"
+
+      - name: Run LightGBM test suites
+        run: |
+          docker run --rm \
+            -v "$PWD":/workspace \
+            -v ~/.cache/coursier:/root/.cache/coursier \
+            -v ~/.ivy2:/root/.ivy2 \
+            -v ~/.sbt:/root/.sbt \
+            synapseml-ci sbt -batch "getDatasets" \
+              "lightgbm/testOnly com.microsoft.azure.synapse.ml.lightgbm.split5.VerifyCoordinatorAccuracy com.microsoft.azure.synapse.ml.lightgbm.split5.VerifyLightGBMClassifierStream"
+
+      - name: Fix ownership of files created by the container
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" "$PWD" ~/.cache/coursier ~/.ivy2 ~/.sbt
