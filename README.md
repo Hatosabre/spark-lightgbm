@@ -1,9 +1,9 @@
-# SynapseML LightGBM (fork)
+# spark-lightgbm
 
 > **About this fork**
-> This repository is a personal fork of [microsoft/SynapseML](https://github.com/microsoft/SynapseML) maintained by Hatosabre, trimmed down to the LightGBM module (`core` + `lightgbm`) with fixes for distributed training. It is not affiliated with Microsoft. The original code is Copyright (c) Microsoft Corporation and the fork's modifications are Copyright (c) 2026 Hatosabre; everything is distributed under the MIT License (see [LICENSE](LICENSE)). Issues and pull requests are not accepted here; please use the upstream project.
+> **spark-lightgbm** is a personal fork of [microsoft/SynapseML](https://github.com/microsoft/SynapseML) maintained by Hatosabre, trimmed down to the LightGBM module (`core` + `lightgbm`) with fixes for distributed training. It is not affiliated with Microsoft. The original code is Copyright (c) Microsoft Corporation and the fork's modifications are Copyright (c) 2026 Hatosabre; everything is distributed under the MIT License (see [LICENSE](LICENSE)). Issues and pull requests are not accepted here; please use the upstream project.
 >
-> このリポジトリは microsoft/SynapseML の個人用フォークで、LightGBM モジュールに絞り分散学習の修正を加えたものです。Microsoft とは無関係です。元コードの著作権は Microsoft Corporation、改変部分の著作権は Hatosabre にあり、全体を MIT ライセンスで配布します。Issue / Pull Request は受け付けていません。
+> spark-lightgbm は microsoft/SynapseML の個人用フォークで、LightGBM モジュールに絞り分散学習の修正を加えたものです。Microsoft とは無関係です。元コードの著作権は Microsoft Corporation、改変部分の著作権は Hatosabre にあり、全体を MIT ライセンスで配布します。Issue / Pull Request は受け付けていません。
 
 Distributed [LightGBM](https://github.com/microsoft/LightGBM) training and inference on Apache Spark, exposed as SparkML estimators (`LightGBMClassifier`, `LightGBMRegressor`, `LightGBMRanker`), with per-row TreeSHAP contributions from the native booster.
 
@@ -43,8 +43,8 @@ docker build --build-arg JDK_VERSION=17 -t synapseml-ci tools/docker/ci   # for 
 ### Build the JAR
 
 ```bash
-git clone https://github.com/Hatosabre/SynapseML.git
-cd SynapseML                     # branch v1.0.8-spark3.5
+git clone https://github.com/Hatosabre/spark-lightgbm.git
+cd spark-lightgbm                # branch v1.0.8-spark3.5
 
 # fat JAR with lightgbmlib and the core module, Scala/Spark excluded
 sbt lightgbm/assembly
