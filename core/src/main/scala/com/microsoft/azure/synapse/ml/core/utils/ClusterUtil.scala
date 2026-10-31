@@ -153,34 +153,6 @@ object ClusterUtil {
       .map(_ => java.lang.Runtime.getRuntime.availableProcessors).collect.head
   }
 
-  /** Returns the number of executors in the cluster.
-    * @param spark The current spark session.
-    * @param log The Logger.
-    * @return The number of executors.
-    */
-  def getNumExecutors(spark: SparkSession, log: Logger): Int = {
-    val executors = getExecutors(spark)
-    if (executors.nonEmpty) {
-      log.info(s"Retrieved ${executors.length} executors")
-      executors.length
-    } else {
-      // In local mode there are no real executors, just the driver acting as one
-      val master = spark.sparkContext.master
-      val localRx = "local(?:\\[.*\\])?".r
-      if (localRx.findFirstIn(master).isDefined) {
-        log.info("Running in local mode, using 1 executor")
-        1
-      } else {
-        // Non-local but block manager not populated yet - estimate from memory status
-        val numBlockManagers = BlockManagerUtils.getBlockManager(spark)
-          .master.getMemoryStatus.size
-        val numExecs = math.max(1, numBlockManagers - 1) // subtract driver
-        log.info(s"Estimated $numExecs executors from block manager ($numBlockManagers total)")
-        numExecs
-      }
-    }
-  }
-
   /** Returns the number of executors * number of tasks.
     * @param spark The current spark session.
     * @param numTasksPerExec The number of tasks per executor.
