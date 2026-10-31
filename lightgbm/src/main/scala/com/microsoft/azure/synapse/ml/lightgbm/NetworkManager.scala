@@ -324,6 +324,7 @@ case class NetworkManager(numTasks: Int,
 
   @volatile private var stopMaintenanceMode: Boolean = false
   private val MaintenanceModeAcceptTimeoutMs = 2000 //scalastyle:ignore magic.number
+  private val MaintenanceModeReadTimeoutMs = 10000 //scalastyle:ignore magic.number
 
   // Arrays to store network topology in as it arrives
   private val hostAndPorts = ListBuffer[(Socket, String)]()
@@ -521,6 +522,8 @@ case class NetworkManager(numTasks: Int,
                                           topologyString: String,
                                           partitionsString: String): Unit = {
     try {
+      // Bound the read so a client that connects but never sends a line cannot stall the accept loop
+      socket.setSoTimeout(MaintenanceModeReadTimeoutMs)
       val reader = new BufferedReader(new InputStreamReader(socket.getInputStream))
       val writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream))
       val messageStr = reader.readLine()
