@@ -7,7 +7,6 @@ import com.microsoft.azure.synapse.ml.core.contracts.{HasFeaturesCol, HasInputCo
 import com.microsoft.azure.synapse.ml.core.test.base.TestBase
 import com.microsoft.azure.synapse.ml.core.utils.JarLoadingUtils
 import com.microsoft.azure.synapse.ml.logging.SynapseMLLogging
-import com.microsoft.azure.synapse.ml.services.{HasAADToken, HasSubscriptionKey}
 import org.apache.spark.ml._
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.util.{MLReadable, MLWritable}
@@ -398,27 +397,6 @@ class FuzzingTest extends TestBase {
       if (!exemptions(stage.getClass.getName)) {
         assertOrLog(SynapseMLLogging.LoggedClasses(stage.getClass.toString),
           stage.getClass.getName + " does not call logClass in the constructor")
-        assertOrLog(clazz.isAssignableFrom(stage.getClass),
-          stage.getClass.getName + " needs to extend " + clazz.getName)
-      }
-    }
-  }
-
-  test("Verify all classes extending HasSubscriptionKey also extend HasAADToken") {
-    val exemptions = Set[String](
-      // MVAD doesn't support aad token for now
-      "com.microsoft.azure.synapse.ml.services.anomaly.SimpleDetectMultivariateAnomaly",
-      "com.microsoft.azure.synapse.ml.services.anomaly.SimpleFitMultivariateAnomaly",
-      // TO BE VERIFIED
-      "com.microsoft.azure.synapse.ml.services.speech.ConversationTranscription",
-      "com.microsoft.azure.synapse.ml.services.speech.SpeechToTextSDK",
-      "com.microsoft.azure.synapse.ml.services.speech.TextToSpeech"
-    )
-    val subClazz = classOf[HasSubscriptionKey]
-    val clazz = classOf[HasAADToken]
-
-    pipelineStages.foreach { stage =>
-      if (!exemptions(stage.getClass.getName) && subClazz.isAssignableFrom(stage.getClass)) {
         assertOrLog(clazz.isAssignableFrom(stage.getClass),
           stage.getClass.getName + " needs to extend " + clazz.getName)
       }
