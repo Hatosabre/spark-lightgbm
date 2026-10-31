@@ -231,7 +231,8 @@ Setters follow the parameter name (`setNumLeaves`, PySpark keyword `numLeaves`).
 | `tweedieVariancePower` | regressor | power for `tweedie` |
 | `groupCol`, `evalAt` | ranker | query group column and NDCG/MAP cut-offs |
 | `weightCol`, `initScoreCol` | all | row weights and initial scores |
-| `categoricalSlotIndexes`, `categoricalSlotNames`, `catl2`, `minDataPerGroup` | all | categorical features (by index or slot name) and their regularization |
+| `categoricalSlotIndexes`, `categoricalSlotNames` | all | which feature slots are categorical (by index or slot name) |
+| `maxCatThreshold` (32), `maxCatToOnehot` (4), `minDataPerGroup` (100), `catl2` (10), `catSmooth` (10) | all | categorical split search: max split points tried per categorical feature, one-vs-rest below this many categories, min rows per category group, L2 and smoothing on category statistics. See the caveats below |
 | `monotoneConstraints`, `monotoneConstraintsMethod`, `monotonePenalty` | all | per-feature monotonic constraints |
 
 ### Validation, metrics and early stopping
@@ -263,6 +264,14 @@ Setters follow the parameter name (`setNumLeaves`, PySpark keyword `numLeaves`).
 | `defaultListenPort`, `driverListenPort` | 12400, 0 | executor and driver listen ports (0 = random) |
 | `binSampleCount`, `samplingMode`, `samplingSubsetSize` | 200000, `subset`, 1000000 | how many rows are sampled to define histogram bins in streaming mode |
 | `repartitionByGroupingColumn` | true | ranker: keep each group in one partition |
+
+### Parameter caveats from distributed runs
+
+- **`isUnbalance` vs oversampling.** `isUnbalance=true` only reweights the positive class inside each partition. With a strong imbalance the minority rows end up thinly spread over the partitions, so each worker sees a handful of positives and the resulting model quality varies noticeably from run to run. Oversampling the minority class (or undersampling the majority) *before* `fit` gives far more stable accuracy than `isUnbalance`; `posBaggingFraction` / `negBaggingFraction` are a lighter alternative when rebuilding the DataFrame is not an option.
+- **`maxCatToOnehot`: set it to 1.** Every categorical feature with at most this many distinct values is split one-vs-rest (one-hot style). With the default (4) or anything larger, too many features take the one-hot path on real data and the run becomes heavy enough to kill executors. With `maxCatToOnehot=1` all categorical features use the sorted-histogram split and training stays stable.
+- **`maxCatThreshold`: at least the largest number of distinct values among your categorical features.** It caps how many category split points LightGBM considers. When it is below the actual cardinality the stage runs far longer than Spark planned for it, and the mismatch between the execution plan and the real processing time surfaces as task failures mid-training. Count the distinct values of each categorical column (`approx_count_distinct`) and set `maxCatThreshold` to the maximum (the default 32 is only enough for small codes).
+- **Other knobs that drive categorical cost.** `minDataPerGroup` (raise it to drop rare categories from the search), `catSmooth` / `catl2` (regularize rare categories instead of splitting on them), `maxBin` / `maxBinByFeature` (bins per feature; fewer bins, cheaper histograms). High-cardinality IDs are usually better hashed or target-encoded upstream than declared categorical.
+- **Streaming-mode memory.** `microBatchSize` (100) bounds the rows copied to native per push; `binSampleCount` (200000) bounds the rows sampled to define bins. Reduce both on very wide data before raising executor memory.
 
 Operational notes:
 
