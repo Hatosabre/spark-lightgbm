@@ -1,8 +1,26 @@
 import pyspark
 from pyspark import SparkContext
 from pyspark.sql import DataFrame
-from pyspark.sql.types import StructType, StructField
-from synapse.ml.opencv.ImageTransformer import ImageSchema
+from pyspark.sql.types import (
+    BinaryType,
+    IntegerType,
+    StringType,
+    StructField,
+    StructType,
+)
+
+# Image schema shared with Spark's image data source
+# (previously imported from synapse.ml.opencv.ImageTransformer)
+ImageSchema = StructType(
+    [
+        StructField("origin", StringType(), True),
+        StructField("height", IntegerType(), True),
+        StructField("width", IntegerType(), True),
+        StructField("nChannels", IntegerType(), True),
+        StructField("mode", IntegerType(), True),  # OpenCV type: CV_8U in most cases
+        StructField("data", BinaryType(), True),
+    ]
+)
 
 
 image_source = "org.apache.spark.ml.source.image.PatchedImageFileFormat"
