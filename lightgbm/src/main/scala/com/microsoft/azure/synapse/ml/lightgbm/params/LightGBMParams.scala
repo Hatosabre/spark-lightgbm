@@ -91,7 +91,7 @@ trait LightGBMExecutionParams extends Wrappable {
 
   val dataTransferMode = new Param[String](this, "dataTransferMode",
     "Specify how SynapseML transfers data from Spark to LightGBM.  " +
-      "Values can be streaming, bulk. Default is bulk, which is the legacy mode.")
+      "Values can be streaming, bulk. Default is streaming.")
   setDefault(dataTransferMode -> LightGBMConstants.StreamingDataTransferMode)
   def getDataTransferMode: String = $(dataTransferMode)
   def setDataTransferMode(value: String): this.type = set(dataTransferMode, value)
@@ -214,6 +214,13 @@ trait LightGBMLearnerParams extends Wrappable {
   setDefault(monotonePenalty -> 0.0)
   def getMonotonePenalty: Double = $(monotonePenalty)
   def setMonotonePenalty(value: Double): this.type = set(monotonePenalty, value)
+
+  val metricLogPeriod = new IntParam(this, "metricLogPeriod",
+    "Log evaluation metrics every N iterations. 0 to disable. " +
+    "Only effective when isProvideTrainingMetric is true or validation data is present.")
+  setDefault(metricLogPeriod -> 10)
+  def getMetricLogPeriod: Int = $(metricLogPeriod)
+  def setMetricLogPeriod(value: Int): this.type = set(metricLogPeriod, value)
 
   val topRate = new DoubleParam(this, "topRate", "The retain ratio of large gradient data. Only used in goss.")
   setDefault(topRate -> 0.2)

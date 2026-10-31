@@ -91,7 +91,8 @@ case class GeneralParams(parallelism: String,
                          monotoneConstraints: Array[Int],
                          monotoneConstraintsMethod: Option[String],
                          monotonePenalty: Option[Double],
-                         featureNames: Array[String]) extends ParamGroup {
+                         featureNames: Array[String],
+                         metricLogPeriod: Int) extends ParamGroup {
   def appendParams(sb: ParamsStringBuilder): ParamsStringBuilder =
   {
     sb.appendParamValueIfNotThere("is_pre_partition", Option("True"))
