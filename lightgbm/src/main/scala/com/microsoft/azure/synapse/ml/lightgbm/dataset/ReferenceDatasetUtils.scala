@@ -1,4 +1,5 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (C) 2026 Hatosabre. Modifications licensed under the MIT License.
 // Licensed under the MIT License. See LICENSE in project root for information.
 
 package com.microsoft.azure.synapse.ml.lightgbm.dataset
@@ -116,6 +117,27 @@ object ReferenceDatasetUtils {
     }
 
     byteArray
+  }
+
+  def getInitializedReferenceDatasetForCoordinator(
+      serializedDataset: Array[Byte],
+      rowCount: Int,
+      datasetParams: String,
+      hasWeights: Int,
+      hasInitialScores: Int,
+      hasGroups: Int,
+      numClass: Int,
+      numThreads: Int,
+      maxStreamingOMPThreads: Int,
+      featureNames: Option[Array[String]],
+      numCols: Int): LightGBMDataset = {
+    val dataset = deserializeReferenceDataset(serializedDataset, rowCount, datasetParams)
+    LightGBMUtils.validate(lightgbmlib.LGBM_DatasetInitStreaming(
+      dataset.datasetPtr,
+      hasWeights, hasInitialScores, hasGroups, numClass,
+      numThreads, maxStreamingOMPThreads),
+      "LGBM_DatasetInitStreaming")
+    dataset.setFeatureNames(featureNames, numCols)
   }
 
   private def deserializeReferenceDataset(serializedDataset: Array[Byte],

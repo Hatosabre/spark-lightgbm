@@ -1,4 +1,5 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (C) 2026 Hatosabre. Modifications licensed under the MIT License.
 // Licensed under the MIT License. See LICENSE in project root for information.
 
 package com.microsoft.azure.synapse.ml.lightgbm
@@ -48,6 +49,34 @@ trait LightGBMModelMethods extends LightGBMModelParams with Logging {
   def getSparseFeatureShaps(size: Int, indices: Array[Int], values: Array[Double]): Array[Double] = {
     getLightGBMBooster.featuresShap(Vectors.sparse(size, indices, values))
   }
+
+  /**
+    * Public method to get the iteration indices recorded during training.
+    * @return Array of iteration indices.
+    */
+  def getTrainingMetricIterations(): Array[Int] = getLightGBMBooster.getTrainingMetricIterations()
+
+  /**
+    * Public method to get the distinct metric names recorded during training.
+    * @return Array of metric names.
+    */
+  def getTrainingMetricNames(): Array[String] = getLightGBMBooster.getTrainingMetricNames()
+
+  /**
+    * Public method to get the training metric values for a given metric name.
+    * @param metricName The name of the metric (e.g. "binary_logloss", "auc").
+    * @return Array of metric values, one per recorded iteration.
+    */
+  def getTrainingMetricTrainValues(metricName: String): Array[Double] =
+    getLightGBMBooster.getTrainingMetricTrainValues(metricName)
+
+  /**
+    * Public method to get the validation metric values for a given metric name.
+    * @param metricName The name of the metric (e.g. "binary_logloss", "auc").
+    * @return Array of metric values, one per recorded iteration.
+    */
+  def getTrainingMetricValidValues(metricName: String): Array[Double] =
+    getLightGBMBooster.getTrainingMetricValidValues(metricName)
 
   /**
     * Public method to get the best iteration from the booster.

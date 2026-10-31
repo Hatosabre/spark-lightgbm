@@ -133,7 +133,7 @@ rootGenDir := {
 
 def runTaskForAllInCompile(task: TaskKey[Unit]): Def.Initialize[Task[Seq[Unit]]] = {
   task.all(ScopeFilter(
-    inProjects(core, deepLearning, cognitive, vw, lightgbm, opencv),
+    inProjects(core, lightgbm),
     inConfigurations(Compile))
   )
 }
@@ -148,7 +148,6 @@ generatePythonDoc := {
   runCmd(activateCondaEnv ++ Seq("sphinx-apidoc", "-f", "-o", "doc", "."), dir)
   runCmd(activateCondaEnv ++ Seq("sphinx-build", "-b", "html", "doc", "../../../doc/pyspark"), dir)
 }
-
 
 val packageSynapseML = TaskKey[Unit]("packageSynapseML", "package all projects into SynapseML")
 packageSynapseML := {
@@ -300,18 +299,6 @@ lazy val core = (project in file("core"))
     buildInfoPackage := "com.microsoft.azure.synapse.ml.build"
   ): _*)
 
-lazy val deepLearning = (project in file("deep-learning"))
-  .dependsOn(core % "test->test;compile->compile", opencv % "test->test;compile->compile")
-  .settings(settings ++ Seq(
-    libraryDependencies ++= Seq(
-      "com.microsoft.azure" % "onnx-protobuf_2.12" % "0.9.3",
-      "com.microsoft.onnxruntime" % "onnxruntime_gpu" % "1.8.1",
-      "org.apache.hadoop" % "hadoop-common" % "3.3.4" % "test",
-      "org.apache.hadoop" % "hadoop-azure" % "3.3.4" % "test",
-    ),
-    name := "synapseml-deep-learning"
-  ): _*)
-
 lazy val lightgbm = (project in file("lightgbm"))
   .dependsOn(core % "test->test;compile->compile")
   .settings(settings ++ Seq(
@@ -319,40 +306,11 @@ lazy val lightgbm = (project in file("lightgbm"))
     name := "synapseml-lightgbm"
   ): _*)
 
-lazy val vw = (project in file("vw"))
-  .dependsOn(core % "test->test;compile->compile")
-  .settings(settings ++ Seq(
-    libraryDependencies += ("com.github.vowpalwabbit" % "vw-jni" % "9.3.0"),
-    name := "synapseml-vw"
-  ): _*)
-
-lazy val cognitive = (project in file("cognitive"))
-  .dependsOn(core % "test->test;compile->compile")
-  .settings(settings ++ Seq(
-    libraryDependencies ++= Seq(
-      "com.microsoft.cognitiveservices.speech" % "client-sdk" % "1.24.1",
-      "org.apache.hadoop" % "hadoop-common" % "3.3.4" % "test",
-      "org.apache.hadoop" % "hadoop-azure" % "3.3.4" % "test",
-    ),
-    name := "synapseml-cognitive"
-  ): _*)
-
-lazy val opencv = (project in file("opencv"))
-  .dependsOn(core % "test->test;compile->compile")
-  .settings(settings ++ Seq(
-    libraryDependencies += ("org.openpnp" % "opencv" % "3.2.0-1"),
-    name := "synapseml-opencv"
-  ): _*)
-
 lazy val root = (project in file("."))
-  .aggregate(core, deepLearning, cognitive, vw, lightgbm, opencv)
+  .aggregate(core, lightgbm)
   .dependsOn(
     core % "test->test;compile->compile",
-    deepLearning % "test->test;compile->compile",
-    cognitive % "test->test;compile->compile",
-    vw % "test->test;compile->compile",
-    lightgbm % "test->test;compile->compile",
-    opencv % "test->test;compile->compile")
+    lightgbm % "test->test;compile->compile")
   .enablePlugins(ScalaUnidocPlugin)
   .disablePlugins(CodegenPlugin)
   .settings(settings ++ Seq(
@@ -367,22 +325,9 @@ lazy val root = (project in file("."))
 val setupTask = TaskKey[Unit]("setup", "set up library for intellij")
 setupTask := {
   compile.all(ScopeFilter(
-    inProjects(root, core, deepLearning, cognitive, vw, lightgbm, opencv),
+    inProjects(root, core, lightgbm),
     inConfigurations(Compile, Test))
   ).value
   getDatasetsTask.value
 }
 
-val convertNotebooks = TaskKey[Unit]("convertNotebooks", "convert notebooks to markdown for website display")
-convertNotebooks := {
-  runCmd(Seq("pip", "install", "-e", "."), wd=join(baseDirectory.value, "tools/docgen"))
-  runCmd(Seq("python", "__main__.py"), wd=join(baseDirectory.value, "tools/docgen/docgen"))
-}
-
-val testWebsiteDocs = TaskKey[Unit]("testWebsiteDocs",
-  "test code blocks inside markdowns under folder website/docs/documentation")
-testWebsiteDocs := {
-  runCmd(
-    Seq("python", s"${join(baseDirectory.value, "website/doctest.py")}", version.value)
-  )
-}

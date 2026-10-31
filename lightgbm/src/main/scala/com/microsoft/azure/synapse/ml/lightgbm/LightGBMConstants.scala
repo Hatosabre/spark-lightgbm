@@ -1,4 +1,5 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (C) 2026 Hatosabre. Modifications licensed under the MIT License.
 // Licensed under the MIT License. See LICENSE in project root for information.
 
 package com.microsoft.azure.synapse.ml.lightgbm
@@ -64,10 +65,14 @@ object LightGBMConstants {
   val DefaultNumIterations: Int = -1
   /** The number of retries for network initialization of native lightgbm
     */
-  val NetworkRetries: Int = 3
+  val NetworkRetries: Int = 7
   /**
     * Delay prior to exponential backoff for network initialization
     */
   val InitialDelay: Long = 1000L
+  /**
+    * Maximum delay between retries for network initialization (cap for exponential backoff)
+    */
+  val MaxRetryDelay: Long = 30000L
 }
 

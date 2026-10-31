@@ -1,4 +1,5 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (C) 2026 Hatosabre. Modifications licensed under the MIT License.
 // Licensed under the MIT License. See LICENSE in project root for information.
 
 package com.microsoft.azure.synapse.ml.lightgbm.params
@@ -91,7 +92,8 @@ case class GeneralParams(parallelism: String,
                          monotoneConstraints: Array[Int],
                          monotoneConstraintsMethod: Option[String],
                          monotonePenalty: Option[Double],
-                         featureNames: Array[String]) extends ParamGroup {
+                         featureNames: Array[String],
+                         metricLogPeriod: Int) extends ParamGroup {
   def appendParams(sb: ParamsStringBuilder): ParamsStringBuilder =
   {
     sb.appendParamValueIfNotThere("is_pre_partition", Option("True"))

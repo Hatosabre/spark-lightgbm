@@ -1,4 +1,5 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (C) 2026 Hatosabre. Modifications licensed under the MIT License.
 // Licensed under the MIT License. See LICENSE in project root for information.
 
 package com.microsoft.azure.synapse.ml.lightgbm
@@ -13,7 +14,7 @@ import org.apache.spark.sql.SparkSession
 import org.slf4j.Logger
 
 import java.io.{BufferedReader, BufferedWriter, IOException, InputStreamReader, OutputStreamWriter}
-import java.net.{InetSocketAddress, ServerSocket, Socket}
+import java.net.{InetSocketAddress, ServerSocket, Socket, SocketException, SocketTimeoutException}
 import java.util.concurrent.Executors
 import scala.annotation.tailrec
 import scala.collection.mutable
@@ -42,6 +43,11 @@ case class NetworkTopologyInfo(lightgbmNetworkString: String,
                                localListenPort: Int)
 
 object NetworkManager {
+  // Custom backoffs for driver connection retries (longer than default FaultToleranceUtils.Backoffs)
+  // to handle cases where driver socket may be temporarily busy during maintenance mode
+  private val DriverConnectionBackoffs: Seq[Int] =
+    Seq(0, 200, 500, 1000, 2000, 5000, 10000) //scalastyle:ignore magic.number
+
   /**
     * Create a NetworkManager, which will encapsulate all network operations.
     * This method will opens a socket communications channel on the driver, and then initialize
@@ -104,24 +110,29 @@ object NetworkManager {
                            taskId: Long,
                            partitionId: Int,
                            shouldExecuteTraining: Boolean,
-                           measures: TaskInstrumentationMeasures): NetworkTopologyInfo = {
+                           measures: TaskInstrumentationMeasures): (NetworkTopologyInfo, Option[Socket]) = {
     measures.markNetworkInitializationStart()
     val networkParams = ctx.networkParams
-    val out = using(findOpenPort(ctx, log).get) {
-      openPort =>
-        val localListenPort = openPort.getLocalPort
-        log.info(s"LightGBM task $taskId connecting to host: ${networkParams.ipAddress}, port: ${networkParams.port}")
-        FaultToleranceUtils.retryWithTimeout() {
-          getNetworkTopologyInfoFromDriver(networkParams,
-                                           taskId,
-                                           partitionId,
-                                           localListenPort,
-                                           log,
-                                           shouldExecuteTraining)
-        }
-    }.get
-    measures.markNetworkInitializationStop()
-    out
+    val portSocket = findOpenPort(ctx, log)
+    try {
+      val openPort = portSocket.get
+      val localListenPort = openPort.getLocalPort
+      log.info(s"LightGBM task $taskId connecting to host: ${networkParams.ipAddress}, port: ${networkParams.port}")
+      val info = FaultToleranceUtils.retryWithTimeout(DriverConnectionBackoffs) {
+        getNetworkTopologyInfoFromDriver(networkParams,
+                                         taskId,
+                                         partitionId,
+                                         localListenPort,
+                                         log,
+                                         shouldExecuteTraining)
+      }
+      measures.markNetworkInitializationStop()
+      (info, portSocket)
+    } catch {
+      case e: Exception =>
+        portSocket.foreach(_.close())
+        throw e
+    }
   }
 
   private def getNetworkTopologyInfoFromDriver(networkParams: NetworkParams,
@@ -212,8 +223,9 @@ object NetworkManager {
           log.info(s"NetworkInit reached maximum exceptions on retry: $ex")
           throw ex
         }
-        log.info(s"Retrying NetworkInit with local port ${ctx.localListenPort}")
-        initLightGBMNetwork(ctx, log, retry - 1, delay * 2)
+        log.info(s"Retrying NetworkInit with local port ${ctx.localListenPort}, retries remaining: $retry")
+        val nextDelay = math.min(delay * 2, LightGBMConstants.MaxRetryDelay)
+        initLightGBMNetwork(ctx, log, retry - 1, nextDelay)
     }
   }
 
@@ -311,6 +323,10 @@ case class NetworkManager(numTasks: Int,
                           timeout: Double,
                           useBarrierExecutionMode: Boolean) extends Logging {
 
+  @volatile private var stopMaintenanceMode: Boolean = false
+  private val MaintenanceModeAcceptTimeoutMs = 2000 //scalastyle:ignore magic.number
+  private val MaintenanceModeReadTimeoutMs = 10000 //scalastyle:ignore magic.number
+
   // Arrays to store network topology in as it arrives
   private val hostAndPorts = ListBuffer[(Socket, String)]()
   private val loadOnlyHostAndPorts = ListBuffer[Socket]() // TODO we know this count right?
@@ -338,17 +354,51 @@ case class NetworkManager(numTasks: Int,
 
   // This will be kicked off at object creation time, and can be waited on by waitForNetworkDone()
   private val networkCommunicationThread: Future[Unit] = Future {
-    log.info(s"driver waiting for connections on host: $host and port: $port")
-    waitForAllTasksToReport()
+    try {
+      log.info(s"driver waiting for connections on host: $host and port: $port")
+      waitForAllTasksToReport()
 
-    // We have all the information now, so report back to workers
-    sendDataToExecutors(networkTopologyAsString, partitionsByExecutorAsString)
+      // Force evaluation of lazy vals while worker connections are still open
+      val topologyString = networkTopologyAsString
+      val partitionsString = partitionsByExecutorAsString
 
-    closeConnections()
+      // We have all the information now, so report back to workers
+      sendDataToExecutors(topologyString, partitionsString)
+
+      // Close individual worker sockets (no longer needed for initial handshake)
+      closeWorkerConnections()
+
+      // In non-barrier mode, keep ServerSocket open to handle retry connections from
+      // individual Spark task retries. In barrier mode, Spark retries the entire stage
+      // with new tasks/ports, so the cached topology would be stale and harmful.
+      if (!useBarrierExecutionMode) {
+        runMaintenanceLoop(topologyString, partitionsString)
+      }
+    } catch {
+      case e: Exception =>
+        log.error(s"driver network communication thread failed: ${e.getMessage}", e)
+        throw e
+    } finally {
+      closeDriverServerSocket()
+    }
   } (ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor()))
 
   def waitForNetworkCommunicationsDone(): Unit = {
+    stopMaintenanceMode = true
     Await.result(networkCommunicationThread, Duration(timeout, SECONDS))
+  }
+
+  /** Immediately stop the maintenance loop and close the driver server socket.
+    * Called when executePartitionTasks throws an exception to ensure cleanup.
+    */
+  def shutdown(): Unit = {
+    stopMaintenanceMode = true
+    try {
+      driverServerSocket.close()
+    } catch {
+      case e: IOException =>
+        log.warn(s"Error closing driver server socket during shutdown: ${e.getMessage}")
+    }
   }
 
   private def waitForAllTasksToReport(): Unit = {
@@ -444,10 +494,71 @@ case class NetworkManager(numTasks: Int,
     })
   }
 
-  private def closeConnections(): Unit = {
-    log.info("driver closing all sockets and server socket")
+  /** Keep the driver ServerSocket open after initial handshake to accept retry connections.
+    * When Spark retries a task after LGBM_NetworkInit failure, the retried task reconnects
+    * to this socket and receives the cached topology, allowing recovery without "Connection refused".
+    */
+  private def runMaintenanceLoop(topologyString: String, partitionsString: String): Unit = {
+    log.info("driver entering maintenance mode to handle potential retry connections")
+    driverServerSocket.setSoTimeout(MaintenanceModeAcceptTimeoutMs)
+    while (!stopMaintenanceMode) {
+      try {
+        val socket = driverServerSocket.accept()
+        handleMaintenanceConnection(socket, topologyString, partitionsString)
+      } catch {
+        case _: SocketTimeoutException =>
+          // Normal timeout, just loop and check stopMaintenanceMode flag
+        case _: SocketException if stopMaintenanceMode =>
+          // Socket was closed by shutdown() or waitForNetworkCommunicationsDone(), normal exit
+          log.info("driver maintenance mode: server socket closed, exiting")
+      }
+    }
+    log.info("driver exiting maintenance mode")
+  }
+
+  /** Handle a single retry connection during maintenance mode.
+    * Reads the worker's message and sends back the cached topology.
+    */
+  private def handleMaintenanceConnection(socket: Socket,
+                                          topologyString: String,
+                                          partitionsString: String): Unit = {
+    try {
+      // Bound the read so a client that connects but never sends a line cannot stall the accept loop
+      socket.setSoTimeout(MaintenanceModeReadTimeoutMs)
+      val reader = new BufferedReader(new InputStreamReader(socket.getInputStream))
+      val writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream))
+      val messageStr = reader.readLine()
+      log.info(s"driver maintenance mode received retry connection: $messageStr")
+
+      writer.write(topologyString + "\n")
+      writer.write(partitionsString + "\n")
+      writer.flush()
+      log.info("driver maintenance mode sent cached topology to retried task")
+    } catch {
+      case e: IOException =>
+        log.warn(s"driver maintenance mode: error handling retry connection: ${e.getMessage}")
+    } finally {
+      try { socket.close() } catch { case _: IOException => }
+    }
+  }
+
+  private def closeWorkerConnections(): Unit = {
+    log.info("driver closing worker sockets")
     hostAndPorts.foreach(_._1.close())
-    driverServerSocket.close()
-    log.info("driver done closing all sockets and server socket")
+    loadOnlyHostAndPorts.foreach(_.close())
+    log.info("driver done closing worker sockets")
+  }
+
+  private def closeDriverServerSocket(): Unit = {
+    log.info("driver closing server socket")
+    try {
+      if (!driverServerSocket.isClosed) {
+        driverServerSocket.close()
+      }
+    } catch {
+      case e: IOException =>
+        log.warn(s"Error closing driver server socket: ${e.getMessage}")
+    }
+    log.info("driver done closing server socket")
   }
 }

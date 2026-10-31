@@ -1,4 +1,5 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (C) 2026 Hatosabre. Modifications licensed under the MIT License.
 // Licensed under the MIT License. See LICENSE in project root for information.
 
 package com.microsoft.azure.synapse.ml.lightgbm.params
@@ -214,6 +215,13 @@ trait LightGBMLearnerParams extends Wrappable {
   setDefault(monotonePenalty -> 0.0)
   def getMonotonePenalty: Double = $(monotonePenalty)
   def setMonotonePenalty(value: Double): this.type = set(monotonePenalty, value)
+
+  val metricLogPeriod = new IntParam(this, "metricLogPeriod",
+    "Log evaluation metrics every N iterations. 0 to disable. " +
+    "Only effective when isProvideTrainingMetric is true or validation data is present.")
+  setDefault(metricLogPeriod -> 10)
+  def getMetricLogPeriod: Int = $(metricLogPeriod)
+  def setMetricLogPeriod(value: Int): this.type = set(metricLogPeriod, value)
 
   val topRate = new DoubleParam(this, "topRate", "The retain ratio of large gradient data. Only used in goss.")
   setDefault(topRate -> 0.2)

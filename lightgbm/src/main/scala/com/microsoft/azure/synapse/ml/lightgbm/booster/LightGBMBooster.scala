@@ -1,4 +1,5 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (C) 2026 Hatosabre. Modifications licensed under the MIT License.
 // Licensed under the MIT License. See LICENSE in project root for information.
 
 package com.microsoft.azure.synapse.ml.lightgbm.booster
@@ -247,6 +248,29 @@ class LightGBMBooster(val trainDataset: Option[LightGBMDataset] = None,
   var bestIteration: Int = -1
   private var startIteration: Int = 0
   private var numIterations: Int = -1
+
+  /** Per-iteration training metrics history.
+    * Each entry is (iteration, trainMetrics, validMetrics).
+    * Set by the driver after training completes; not persisted in native model.
+    */
+  var trainingMetrics: Array[(Int, Map[String, Double], Map[String, Double])] = Array.empty
+
+  /** Returns the iteration indices recorded during training. */
+  def getTrainingMetricIterations(): Array[Int] = trainingMetrics.map(_._1)
+
+  /** Returns the distinct metric names recorded during training. */
+  def getTrainingMetricNames(): Array[String] = {
+    if (trainingMetrics.isEmpty) Array.empty
+    else (trainingMetrics.flatMap(_._2.keys) ++ trainingMetrics.flatMap(_._3.keys)).distinct
+  }
+
+  /** Returns the training metric values for the given metric name across all recorded iterations. */
+  def getTrainingMetricTrainValues(metricName: String): Array[Double] =
+    trainingMetrics.map(_._2.getOrElse(metricName, Double.NaN))
+
+  /** Returns the validation metric values for the given metric name across all recorded iterations. */
+  def getTrainingMetricValidValues(metricName: String): Array[Double] =
+    trainingMetrics.map(_._3.getOrElse(metricName, Double.NaN))
 
   /** Merges this Booster with the specified model.
     * @param model The string serialized representation of the learner to merge.

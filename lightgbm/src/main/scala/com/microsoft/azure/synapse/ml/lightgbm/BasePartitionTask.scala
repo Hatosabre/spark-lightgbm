@@ -1,4 +1,5 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (C) 2026 Hatosabre. Modifications licensed under the MIT License.
 // Licensed under the MIT License. See LICENSE in project root for information.
 
 package com.microsoft.azure.synapse.ml.lightgbm
@@ -10,16 +11,20 @@ import com.microsoft.azure.synapse.ml.lightgbm.dataset.DatasetUtils.getArrayType
 import com.microsoft.azure.synapse.ml.lightgbm.dataset.{BaseAggregatedColumns, LightGBMDataset, PeekingIterator}
 import com.microsoft.azure.synapse.ml.lightgbm.params.BaseTrainParams
 import com.microsoft.ml.lightgbm.lightgbmlib
+import org.apache.spark.BarrierTaskContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
 
+import java.net.Socket
 import scala.language.existentials
 
 /**
   * Object to encapsulate results from mapPartitions call.
   */
 case class PartitionResult(booster: Option[LightGBMBooster],
-                           taskMeasures: TaskInstrumentationMeasures)
+                           taskMeasures: TaskInstrumentationMeasures,
+                           metricLog: Array[String],
+                           metricHistory: Array[(Int, Map[String, Double], Map[String, Double])])
 
 /**
   * Object to encapsulate all intermediate data calculations.
@@ -43,6 +48,12 @@ case class PartitionTaskTrainingState(ctx: PartitionTaskContext,
   var isFinished: Boolean = false
   var learningRate: Double = ctx.trainingCtx.trainingParams.generalParams.learningRate
   var bestIterationResult: Option[Int] = None
+
+  val metricLog: scala.collection.mutable.ArrayBuffer[String] =
+    scala.collection.mutable.ArrayBuffer.empty[String]
+
+  val metricHistory: scala.collection.mutable.ArrayBuffer[(Int, Map[String, Double], Map[String, Double])] =
+    scala.collection.mutable.ArrayBuffer.empty
 }
 
 /**
@@ -129,35 +140,65 @@ abstract class BasePartitionTask extends Serializable with Logging {
     */
   def mapPartitionTask(ctx: TrainingContext)(inputRows: Iterator[Row]): Iterator[PartitionResult] = {
     // Start with initialization
-    val taskCtx = initialize(ctx, inputRows)
+    val (taskCtx, portSocket) = initialize(ctx, inputRows)
 
-    if (taskCtx.isEmptyPartition) {
-      log.warn("LightGBM task encountered empty partition, for best performance ensure no partitions are empty")
-      Array { PartitionResult(None, taskCtx.measures) }.toIterator
-    } else {
-      // Perform any data preparation work
-      val dataIntermediateState = preparePartitionData(taskCtx, inputRows)
+    try {
+      if (taskCtx.isEmptyPartition) {
+        log.warn("LightGBM task encountered empty partition, for best performance ensure no partitions are empty")
+        // In barrier mode, empty partitions must still participate in the pre-NetworkInit barrier
+        // to prevent other tasks from hanging at the barrier point
+        barrierBeforeNetworkInit(ctx, taskCtx)
+        Array { PartitionResult(None, taskCtx.measures, Array.empty, Array.empty) }.toIterator
+      } else {
+        // Perform any data preparation work (portSocket holds the port occupied during this potentially long phase)
+        val dataIntermediateState = preparePartitionData(taskCtx, inputRows)
 
-      try {
-        if (taskCtx.shouldExecuteTraining) {
-          // If participating in training, initialize the network ring of communication
-          NetworkManager.initLightGBMNetwork(taskCtx, log)
+        // In barrier mode, synchronize all tasks after data preparation and before NetworkInit.
+        // This ensures all workers have finished data prep so that LGBM_NetworkInit() ring
+        // connections succeed on the first attempt rather than relying on retries.
+        barrierBeforeNetworkInit(ctx, taskCtx)
 
-          if (ctx.useSingleDatasetMode) {
-            log.info(s"Waiting for all data prep to be done, task ${taskCtx.taskId}, partition ${taskCtx.partitionId}")
-            ctx.sharedState().dataPreparationDoneSignal.await()
+        try {
+          if (taskCtx.shouldExecuteTraining) {
+            // Release the port socket just before native LightGBM binds the same port
+            portSocket.foreach(_.close())
+            // If participating in training, initialize the network ring of communication
+            NetworkManager.initLightGBMNetwork(taskCtx, log)
+
+            if (ctx.useSingleDatasetMode) {
+              log.info(s"Waiting for all data prep to be done, task ${taskCtx.taskId}, partition ${taskCtx.partitionId}")
+              ctx.sharedState().dataPreparationDoneSignal.await()
+            }
+
+            // Create the final Dataset for training and execute training iterations
+            finalizeDatasetAndTrain(taskCtx, dataIntermediateState)
+          } else {
+            log.info(s"Helper task ${taskCtx.taskId}, partition ${taskCtx.partitionId} finished processing rows")
+            ctx.sharedState().dataPreparationDoneSignal.countDown()
+            Array { PartitionResult(None, taskCtx.measures, Array.empty, Array.empty) }.toIterator
           }
-
-          // Create the final Dataset for training and execute training iterations
-          finalizeDatasetAndTrain(taskCtx, dataIntermediateState)
-        } else {
-          log.info(s"Helper task ${taskCtx.taskId}, partition ${taskCtx.partitionId} finished processing rows")
-          ctx.sharedState().dataPreparationDoneSignal.countDown()
-          Array { PartitionResult(None, taskCtx.measures) }.toIterator
+        } finally {
+          cleanup(taskCtx)
         }
-      } finally {
-        cleanup(taskCtx)
       }
+    } finally {
+      // Safety net: ensure the port socket is always closed
+      portSocket.foreach(s => if (!s.isClosed) s.close())
+    }
+  }
+
+  /** Synchronize all tasks before LGBM_NetworkInit() when using barrier execution mode.
+    * All tasks (empty partitions, helpers, and training tasks) must participate so that
+    * the barrier does not hang.
+    */
+  private def barrierBeforeNetworkInit(ctx: TrainingContext, taskCtx: PartitionTaskContext): Unit = {
+    if (ctx.networkParams.barrierExecutionMode) {
+      log.info(s"Task ${taskCtx.taskId}, partition ${taskCtx.partitionId} " +
+        s"waiting at pre-NetworkInit barrier (isEmpty=${taskCtx.isEmptyPartition}, " +
+        s"shouldTrain=${taskCtx.shouldExecuteTraining})")
+      val context = BarrierTaskContext.get()
+      context.barrier()
+      log.info(s"Task ${taskCtx.taskId}, partition ${taskCtx.partitionId} passed pre-NetworkInit barrier")
     }
   }
 
@@ -167,7 +208,8 @@ abstract class BasePartitionTask extends Serializable with Logging {
     * @param inputRows The Spark rows for a partition as an iterator.
     * @return Information about the context of this task's execution.
     */
-  private def initialize(ctx: TrainingContext, inputRows: Iterator[Row]): PartitionTaskContext = {
+  private def initialize(ctx: TrainingContext,
+                         inputRows: Iterator[Row]): (PartitionTaskContext, Option[Socket]) = {
     val partitionId = getPartitionId
     val taskMeasures = new TaskInstrumentationMeasures(partitionId)
     taskMeasures.markInitializationStart()
@@ -189,12 +231,12 @@ abstract class BasePartitionTask extends Serializable with Logging {
 
     initializeInternal(ctx, shouldExecuteTraining, isEmptyPartition)  // Allow subclasses to do extra initialization
 
-    val networkInfo = NetworkManager.getGlobalNetworkInfo(ctx,
-                                                          log,
-                                                          taskId,
-                                                          partitionId,
-                                                          shouldExecuteTraining,
-                                                          taskMeasures)
+    val (networkInfo, portSocket) = NetworkManager.getGlobalNetworkInfo(ctx,
+                                                                        log,
+                                                                        taskId,
+                                                                        partitionId,
+                                                                        shouldExecuteTraining,
+                                                                        taskMeasures)
 
     // Return booster only from main worker to reduce network communication overhead
     val shouldReturnBooster = if (isEmptyPartition) false
@@ -213,7 +255,7 @@ abstract class BasePartitionTask extends Serializable with Logging {
     if (ctx.trainingParams.generalParams.verbosity > 1)
       log.info(s"Done initializing partition: $partitionId, taskId: $taskId, executor: $getExecutorId")
     taskMeasures.markInitializationStop()
-    taskCtx
+    (taskCtx, portSocket)
   }
 
   /**
@@ -454,9 +496,11 @@ abstract class BasePartitionTask extends Serializable with Logging {
       val modelBooster = new LightGBMBooster(model)
       // Set best iteration on booster if hit early stopping criteria in trainCore
       bestIterationResult.foreach(modelBooster.setBestIteration)
-      Iterator.single(PartitionResult(Option(modelBooster), state.ctx.measures))
+      Iterator.single(PartitionResult(Option(modelBooster), state.ctx.measures,
+        state.metricLog.toArray, state.metricHistory.toArray))
     } else {
-      Iterator.single(PartitionResult(None, state.ctx.measures))
+      Iterator.single(PartitionResult(None, state.ctx.measures,
+        state.metricLog.toArray, state.metricHistory.toArray))
     }
   }
 }

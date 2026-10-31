@@ -1,0 +1,81 @@
+name: Bug report
+description: LightGBM の学習・推論で起きた問題を報告する / Report a problem with LightGBM training or inference
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        このリポジトリは個人用フォークです。upstream (microsoft/SynapseML) 由来の問題は upstream へ報告してください。
+  - type: input
+    id: version
+    attributes:
+      label: Branch / commit
+      description: 使用したブランチと commit SHA (`git rev-parse --short HEAD`)
+      placeholder: v1.0.8-spark3.5 @ 1942586
+    validations:
+      required: true
+  - type: dropdown
+    id: spark
+    attributes:
+      label: Spark version
+      options:
+        - "3.5"
+        - "4.0"
+        - "4.1"
+        - other (describe below)
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Execution environment
+      options:
+        - local[*]
+        - Standalone cluster
+        - YARN
+        - Kubernetes
+        - Databricks
+        - Synapse / Fabric
+        - other (describe below)
+    validations:
+      required: true
+  - type: input
+    id: cluster
+    attributes:
+      label: Cluster shape
+      description: executors x cores / memory, and the number of partitions of the training DataFrame
+      placeholder: 3 executors x 2 cores, 4 GB each, 6 partitions
+  - type: dropdown
+    id: mode
+    attributes:
+      label: dataTransferMode
+      options:
+        - streaming (Coordinator)
+        - bulk
+    validations:
+      required: true
+  - type: textarea
+    id: params
+    attributes:
+      label: Estimator parameters
+      description: LightGBMClassifier / Regressor / Ranker に渡したパラメータ
+      render: python
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: 最小の再現コードとデータの形 (行数・列数・疎密)
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Driver / executor logs
+      description: 例外のスタックトレースと、`NetworkManager` / `CoordinatorPartitionTask` の INFO ログ
+      render: shell
