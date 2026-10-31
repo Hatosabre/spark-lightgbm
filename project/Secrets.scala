@@ -4,8 +4,7 @@
 import spray.json.*
 import spray.json.DefaultJsonProtocol.*
 
-import java.io.{File, IOException, PrintWriter}
-import java.util.Base64
+import java.io.{File, IOException}
 import scala.io.Source
 import scala.sys.process.*
 
@@ -13,7 +12,6 @@ import scala.sys.process.*
 object Secrets {
   private val KvName = "mmlspark-keys"
   private val SubscriptionID = "e342c2c0-f844-4b18-9208-52c8c234c30e"
-  private val PgpFileExtension = ".asc"
   private val EnablePublishEnvVar = "SYNAPSEML_ENABLE_PUBLISH"
 
   lazy private val publishingEnabled: Boolean = sys.env.getOrElse(EnablePublishEnvVar, "false").toBoolean
@@ -77,38 +75,8 @@ object Secrets {
     BuildUtils.join(cacheDir, name)
   }
 
-  private def refreshCachedSecret(name: String): File = {
-    refreshCachedSecret(name, getKeyvaultSecret(name))
-  }
-
-  private def refreshCachedSecret(name: String, secret: String, suffix: String = ""): File = {
-    val cachedSecretFile = BuildUtils.join(cacheDir, name + suffix)
-    if (cachedSecretFile.exists()) {
-      cachedSecretFile.delete()
-    }
-    new PrintWriter(cachedSecretFile) {
-      write(secret)
-      close()
-    }
-    cachedSecretFile
-  }
-
-  private def getOrCreatePgpSecretFile(name: String, env_var: String, refresh: Boolean = false): File = {
-    val cachedSecretFile = cachedFile(name + PgpFileExtension)
-    if (!cachedSecretFile.exists() || refresh) {
-      if (cachedSecretFile.exists()) cachedSecretFile.delete()
-      findAndCacheSecret(env_var, name, PgpFileExtension) // This should make the local pgp file
-      if (!cachedSecretFile.exists()) {
-        println(s"WARNING: Could not create pgp file ${cachedSecretFile.toString}")
-      }
-    } else {
-      println(s"[info] using cached value for pgp secret $name.")
-    }
-    cachedSecretFile
-  }
-
-  private def getSecretFromCacheOrKeyvault(name: String, suffix: String = ""): String = {
-    val cachedSecretFile = cachedFile(name + suffix)
+  private def getSecretFromCacheOrKeyvault(name: String): String = {
+    val cachedSecretFile = cachedFile(name)
     if (cachedSecretFile.exists()) {
       println(s"[info] using cached value for secret $name.")
       val i = Source.fromFile(cachedSecretFile)
@@ -122,31 +90,11 @@ object Secrets {
   /*
      Priority order for finding secrets:
      1. Environment variable (used by pipeline which loads them from keyvault)
-     2. Local cache (only if PGP-ring secret)
-     3. Load from keyvault (and also cached to local file for next time)
-
-     If it is a PPG-ring secret, we cache it
+     2. Local cache
+     3. Load from keyvault
    */
-  private def findAndCacheSecret(env_var: String, name: String, suffix: String = ""): String = {
-    val secret = sys.env.getOrElse(env_var, getSecretFromCacheOrKeyvault(name))
-
-    // In the case of PGP secrets, we need to make the file
-    if (suffix == PgpFileExtension && !cachedFile(name + PgpFileExtension).exists()) {
-      refreshCachedSecret(name, escapeString(secret), suffix)
-    }
-    secret
-  }
-
-  private def escapeString(str: String): String = {
-    new String(Base64.getDecoder.decode(str.getBytes("UTF-8")))
-  }
-
-  /*
-     This will recreate all cached secrets, so only needed if secrets are changed in the keyvault
-   */
-  def refreshCachedSecrets(): Unit = {
-    getOrCreatePgpSecretFile(PgpPrivateSecretName, PgpPrivateEnvVarName, refresh = true)
-    getOrCreatePgpSecretFile(PgpPublicSecretName, PgpPublicEnvVarName, refresh = true)
+  private def findAndCacheSecret(env_var: String, name: String): String = {
+    sys.env.getOrElse(env_var, getSecretFromCacheOrKeyvault(name))
   }
 
   def getSecret(env_var: String, name: String): String = {
@@ -157,38 +105,11 @@ object Secrets {
     }
   }
 
-  def getPgpSecretFile(name: String, env_var: String): File = {
-    if (publishingEnabled) getOrCreatePgpSecretFile(name, env_var)
-    else {
-      println(s"[warn] Secret $name not downloaded. Set $EnablePublishEnvVar=true to enable publishing.")
-      new File("")
-    }
-  }
-
   lazy val adoFeedToken: String = getSecret(ADOFeedTokenEnvVarName, ADOFeedTokenSecretName)
-  lazy val nexusUsername: String = getSecret(NexusUsernameEnvVarName, NexusUsernameSecretName)
-  lazy val nexusPassword: String = getSecret(NexusPasswordEnvVarName, NexusPasswordSecretName)
-  lazy val pgpPassword: String = getSecret(PgpPasswordEnvVarName, PgpPasswordSecretName)
   lazy val pypiApiToken: String = getSecret(PypiApiEnvVarName, PypiApiSecretName)
-
-  lazy val pgpPrivateFile: File = getPgpSecretFile(PgpPrivateSecretName, PgpPrivateEnvVarName)
-  lazy val pgpPublicFile: File = getPgpSecretFile(PgpPublicSecretName, PgpPublicEnvVarName)
-
-  lazy val publishToFeed: Boolean = sys.env.getOrElse(PublishToFeed, "false").toBoolean
 
   val ADOFeedTokenSecretName: String = "ado-feed-token"
   val ADOFeedTokenEnvVarName: String = "ADO-FEED-TOKEN"
-  val NexusUsernameSecretName: String = "nexus-un"
-  val NexusUsernameEnvVarName: String = "NEXUS-UN"
-  val NexusPasswordSecretName: String = "nexus-pw"
-  val NexusPasswordEnvVarName: String = "NEXUS-PW"
-  val PgpPasswordSecretName: String = "pgp-pw"
-  val PgpPasswordEnvVarName: String = "PGP-PW"
-  val PgpPrivateSecretName: String = "pgp-private"
-  val PgpPrivateEnvVarName: String = "PGP-PRIVATE"
-  val PgpPublicSecretName: String = "pgp-public"
-  val PgpPublicEnvVarName: String = "PGP-PUBLIC"
   val PypiApiSecretName: String = "pypi-api-token"
   val PypiApiEnvVarName: String = "PYPI-API-TOKEN"
-  val PublishToFeed: String = "PUBLISH-TO-FEED"
 }
