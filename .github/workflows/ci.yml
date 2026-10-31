@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ "v1.0.8-spark3.5" ]
+    branches: [ "spark4.1" ]
   pull_request:
   workflow_dispatch:
 
@@ -25,7 +25,7 @@ jobs:
           restore-keys: ci-${{ runner.os }}-
 
       - name: Build CI image
-        run: docker build --build-arg JDK_VERSION=11 -t synapseml-ci tools/docker/ci
+        run: docker build --build-arg JDK_VERSION=17 -t synapseml-ci tools/docker/ci
 
       - name: Compile
         run: |
