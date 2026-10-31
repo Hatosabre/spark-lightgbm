@@ -111,7 +111,7 @@ rootGenDir := {
 
 def runTaskForAllInCompile(task: TaskKey[Unit]): Def.Initialize[Task[Seq[Unit]]] = {
   task.all(ScopeFilter(
-    inProjects(core, vw, lightgbm),
+    inProjects(core, lightgbm),
     inConfigurations(Compile))
   )
 }
@@ -394,18 +394,10 @@ lazy val lightgbm = (project in file("lightgbm"))
     name := "synapseml-lightgbm"
   ): _*)
 
-lazy val vw = (project in file("vw"))
-  .dependsOn(core % "test->test;compile->compile")
-  .settings(settings ++ Seq(
-    libraryDependencies += ("com.github.vowpalwabbit" % "vw-jni" % "9.3.0"),
-    name := "synapseml-vw"
-  ): _*)
-
 lazy val root = (project in file("."))
-  .aggregate(core, vw, lightgbm)
+  .aggregate(core, lightgbm)
   .dependsOn(
     core % "test->test;compile->compile",
-    vw % "test->test;compile->compile",
     lightgbm % "test->test;compile->compile")
   .enablePlugins(ScalaUnidocPlugin)
   .disablePlugins(CodegenPlugin)
@@ -421,7 +413,7 @@ lazy val root = (project in file("."))
 val setupTask = TaskKey[Unit]("setup", "set up library for intellij")
 setupTask := {
   compile.all(ScopeFilter(
-    inProjects(root, core, vw, lightgbm),
+    inProjects(root, core, lightgbm),
     inConfigurations(Compile, Test))
   ).value
   getDatasetsTask.value
