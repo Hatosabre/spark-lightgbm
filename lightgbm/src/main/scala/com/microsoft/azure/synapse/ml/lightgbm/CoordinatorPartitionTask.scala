@@ -24,6 +24,15 @@ class CoordinatorPartitionTask extends BasePartitionTask {
   @transient private var trainDataset: Option[LightGBMDataset] = None
   @transient private var validDataset: Option[LightGBMDataset] = None
 
+  override protected def initializeInternal(ctx: TrainingContext,
+                                            shouldExecuteTraining: Boolean,
+                                            isEmptyPartition: Boolean): Unit = {
+    // Link validation dataset worker so that shouldCalcValidationDataset is set correctly
+    if (ctx.hasValidationData && !isEmptyPartition) {
+      ctx.sharedState().linkValidationDatasetWorker()
+    }
+  }
+
   override protected def preparePartitionDataInternal(ctx: PartitionTaskContext,
                                                       inputRows: Iterator[Row]): PartitionDataState = {
     // Step 1: Determine matrix type (sparse vs dense) by sampling first rows
@@ -41,8 +50,24 @@ class CoordinatorPartitionTask extends BasePartitionTask {
 
     // Step 3: Create dataset from serialized reference with exact row count
     val trainingCtx = ctx.trainingCtx
-    val numThreads = trainingCtx.numTasksPerExecutor
-    val maxStreamingOMPThreads = ctx.trainingParams.executionParams.maxStreamingOMPThreads
+    // Use single-threaded push: eliminates potential thread-safety issues in LightGBM's
+    // C++ push API (push_buffers_ overlap, concurrent bin insertion). The push phase is
+    // memory-bandwidth-bound so parallel push provides minimal throughput benefit.
+    val numPushThreads = 1
+    // Ensure maxStreamingOMPThreads >= availableProcessors to prevent push_buffers_ overlap.
+    // In LightGBM C++, internal_tid = omp_get_thread_num() + (max_omp_threads * tid).
+    // If OMP_NUM_THREADS > max_omp_threads, omp_get_thread_num() can exceed the allocated
+    // buffer range, causing data corruption that manifests as SIGSEGV during training.
+    val availableProcessors = Runtime.getRuntime.availableProcessors
+    val configMaxStreamingOMP = ctx.trainingParams.executionParams.maxStreamingOMPThreads
+    val safeMaxStreamingOMPThreads = Math.max(configMaxStreamingOMP, availableProcessors)
+
+    log.info(s"Coordinator on partition ${ctx.partitionId}: creating dataset with " +
+      s"totalRows=$totalRows, numPushThreads=$numPushThreads, " +
+      s"numCols=${trainingCtx.numCols}, numClass=${ctx.trainingParams.getNumClass}, " +
+      s"maxStreamingOMPThreads=$safeMaxStreamingOMPThreads (config=$configMaxStreamingOMP), " +
+      s"availableProcessors=$availableProcessors, " +
+      s"numTasksPerExecutor=${trainingCtx.numTasksPerExecutor}")
 
     val dataset = ReferenceDatasetUtils.getInitializedReferenceDatasetForCoordinator(
       trainingCtx.serializedReferenceDataset.get,
@@ -52,13 +77,13 @@ class CoordinatorPartitionTask extends BasePartitionTask {
       trainingCtx.hasInitialScoresAsInt,
       trainingCtx.hasGroupsAsInt,
       ctx.trainingParams.getNumClass,
-      numThreads,
-      maxStreamingOMPThreads,
+      numPushThreads,
+      safeMaxStreamingOMPThreads,
       trainingCtx.featureNames,
       trainingCtx.numCols)
 
     // Step 4: Push rows in parallel using thread pool
-    parallelPushRows(ctx, dataset, rowBuffer, numThreads)
+    parallelPushRows(ctx, dataset, rowBuffer, numPushThreads)
 
     trainDataset = Some(dataset)
 
