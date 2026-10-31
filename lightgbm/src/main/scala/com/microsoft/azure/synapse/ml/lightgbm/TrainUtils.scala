@@ -75,23 +75,15 @@ private object TrainUtils extends Serializable {
   }
 
   def updateOneIteration(state: PartitionTaskTrainingState, log: Logger): Unit = {
-    try {
-      log.info(s"LightGBM task starting iteration ${state.iteration}")
-      val fobj = state.ctx.trainingParams.objectiveParams.fobj
-      if (fobj.isDefined) {
-        val (gradient, hessian) = fobj.get.getGradient(
-          state.booster.innerPredict(0, state.ctx.trainingCtx.isClassification),
-          state.booster.trainDataset.get)
-        state.isFinished = state.booster.updateOneIterationCustom(gradient, hessian)
-      } else {
-        state.isFinished = state.booster.updateOneIteration()
-      }
-    } catch {
-      case e: java.lang.Exception =>
-        log.warn("LightGBM reached early termination on one task," +
-          " stopping training on task. This message should rarely occur." +
-          " Inner exception: " + e.toString)
-        state.isFinished = true
+    log.debug(s"LightGBM task starting iteration ${state.iteration}")
+    val fobj = state.ctx.trainingParams.objectiveParams.fobj
+    if (fobj.isDefined) {
+      val (gradient, hessian) = fobj.get.getGradient(
+        state.booster.innerPredict(0, state.ctx.trainingCtx.isClassification),
+        state.booster.trainDataset.get)
+      state.isFinished = state.booster.updateOneIterationCustom(gradient, hessian)
+    } else {
+      state.isFinished = state.booster.updateOneIteration()
     }
   }
 
@@ -117,6 +109,32 @@ private object TrainUtils extends Serializable {
         if (state.ctx.trainingCtx.hasValidationData && !state.isFinished) getValidEvalResults(state, log)
         else None
 
+      // Record structured metric history for every iteration
+      if (trainEvalResults.isDefined || validEvalResults.isDefined) {
+        state.metricHistory += ((state.iteration,
+          trainEvalResults.getOrElse(Map.empty),
+          validEvalResults.getOrElse(Map.empty)))
+      }
+
+      if (shouldLogMetrics(state) && (trainEvalResults.isDefined || validEvalResults.isDefined)) {
+        val line = formatIterationMetrics(state.iteration, trainEvalResults, validEvalResults)
+        state.metricLog += line
+        log.info(line)
+      }
+
+      // Append early stopping message and best iteration's scores after the final metrics line
+      state.bestIterationResult.foreach { bestIter =>
+        val earlyStopMsg = "Early stopping, best iteration is " + bestIter
+        state.metricLog += earlyStopMsg
+        // Find the best iteration's metrics from history and display them
+        state.metricHistory.find(_._1 == bestIter).foreach { case (iter, trainMap, validMap) =>
+          val bestLine = formatIterationMetrics(iter,
+            if (trainMap.nonEmpty) Some(trainMap) else None,
+            if (validMap.nonEmpty) Some(validMap) else None)
+          state.metricLog += bestLine
+        }
+      }
+
       afterTrainIteration(state, log, trainEvalResults, validEvalResults)
 
       state.iteration = state.iteration + 1
@@ -136,14 +154,12 @@ private object TrainUtils extends Serializable {
 
   def getTrainEvalResults(state: PartitionTaskTrainingState, log: Logger): Option[Map[String, Double]] = {
     val evalResults: Array[(String, Double)] = state.booster.getEvalResults(state.evalNames, 0)
-    evalResults.foreach { case (evalName: String, score: Double) => log.info(s"Train $evalName=$score") }
     Option(Map(evalResults: _*))
   }
 
   def getValidEvalResults(state: PartitionTaskTrainingState, log: Logger): Option[Map[String, Double]] = {
     val evalResults: Array[(String, Double)] = state.booster.getEvalResults(state.evalNames, 1)
     val results: Array[(String, Double)] = evalResults.zipWithIndex.map { case ((evalName, evalScore), index) =>
-      log.info(s"Valid $evalName=$evalScore")
       val cmp =
         if (evalName.startsWith("auc")
             || evalName.startsWith("ndcg@")
@@ -157,15 +173,46 @@ private object TrainUtils extends Serializable {
         state.bestScore(index) = evalScore
         state.bestIteration(index) = state.iteration
         state.bestScores(index) = evalResults.map(_._2)
-      } else if (state.iteration - state.bestIteration(index) >= state.ctx.trainingCtx.earlyStoppingRound) {
-        state.isFinished = true
-        log.info("Early stopping, best iteration is " + state.bestIteration(index))
-        state.bestIterationResult = Some(state.bestIteration(index))
       }
 
       (evalName, evalScore)
     }
+
+    // Early stopping: trigger only when ALL metrics have stopped improving
+    if (state.evalCounts > 0 &&
+        (0 until state.evalCounts).forall(i =>
+          state.bestScores(i) != null &&
+          state.iteration - state.bestIteration(i) >= state.ctx.trainingCtx.earlyStoppingRound)) {
+      state.isFinished = true
+      // Use the most recent best iteration across all metrics
+      val bestIter = state.bestIteration.max
+      log.info("Early stopping, best iteration is " + bestIter)
+      state.bestIterationResult = Some(bestIter)
+    }
+
     Option(Map(results: _*))
+  }
+
+  private def shouldLogMetrics(state: PartitionTaskTrainingState): Boolean = {
+    val period = state.ctx.trainingCtx.metricLogPeriod
+    if (period <= 0) false
+    else {
+      val maxIter = state.ctx.trainingParams.generalParams.numIterations
+      state.iteration % period == 0 || state.isFinished || state.iteration >= maxIter - 1
+    }
+  }
+
+  private def formatIterationMetrics(iteration: Int,
+                                    trainResults: Option[Map[String, Double]],
+                                    validResults: Option[Map[String, Double]]): String = {
+    val sb = new StringBuilder(s"[${iteration}]")
+    trainResults.foreach(_.foreach { case (name, value) =>
+      sb.append(s"\ttrain's $name: ${"%.6f".format(value)}")
+    })
+    validResults.foreach(_.foreach { case (name, value) =>
+      sb.append(s"\tvalid's $name: ${"%.6f".format(value)}")
+    })
+    sb.toString()
   }
 
   def beforeGenerateTrainDataset(ctx: PartitionTaskContext, log: Logger): Unit = {

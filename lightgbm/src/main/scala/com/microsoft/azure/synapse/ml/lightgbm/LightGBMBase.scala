@@ -108,6 +108,7 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
 
   protected def prepareDataframe(dataset: Dataset[_], numTasks: Int): DataFrame = {
     val df = castColumns(dataset, getTrainingCols)
+    val isStreamingMode = getDataTransferMode == LightGBMConstants.StreamingDataTransferMode
     // Reduce number of partitions to number of executor tasks
     /* Note: with barrier execution mode we must use repartition instead of coalesce when
      * running on spark standalone.
@@ -131,7 +132,10 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
      * Hence we still need to estimate the number of tasks and repartition even when using
      * barrier execution, which is unfortunate as repartition is more expensive than coalesce.
      */
-    if (getUseBarrierExecutionMode) {
+    if (isStreamingMode) {
+      // Coordinator pattern: 1 partition per executor, always repartition
+      df.repartition(numTasks)
+    } else if (getUseBarrierExecutionMode) {
       val numPartitions = df.rdd.getNumPartitions
       if (numPartitions > numTasks) {
         df.repartition(numTasks)
@@ -284,7 +288,8 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
       getMonotoneConstraints,
       get(monotoneConstraintsMethod),
       get(monotonePenalty),
-      getSlotNames)
+      getSlotNames,
+      getMetricLogPeriod)
   }
 
   /**
@@ -399,6 +404,9 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
 
     val numTasksPerExecutor = ClusterUtil.getNumTasksPerExecutor(dataset.sparkSession, log)
     val numTasks = determineNumTasks(dataset, getNumTasks, numTasksPerExecutor)
+    log.info(s"LightGBM training: numTasks=$numTasks, numTasksPerExecutor=$numTasksPerExecutor, " +
+      s"dataTransferMode=${getDataTransferMode}, configNumTasks=${getNumTasks}, " +
+      s"JVM availableProcessors=${Runtime.getRuntime.availableProcessors}")
     val sc = dataset.sparkSession.sparkContext
 
     val df = prepareDataframe(dataset, numTasks)
@@ -421,15 +429,13 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
     val isStreamingMode = getDataTransferMode == LightGBMConstants.StreamingDataTransferMode
     val (serializedReferenceDataset: Option[Array[Byte]], partitionCounts: Option[Array[Long]]) =
       if (isStreamingMode) {
-        val (referenceDataset, partitionCounts) =
-          calculateRowStatistics(trainingData, trainParams, numCols, measures)
-
-        // Save the reference Dataset so it's available to client and other batches
+        // Coordinator pattern: partitionCounts not needed, only referenceDataset
+        val referenceDataset = calculateReferenceDataset(preprocessedDF, trainParams, numCols, measures)
         if (getReferenceDataset.isEmpty) {
           log.info(s"Saving reference dataset of length: ${referenceDataset.length}")
           setReferenceDataset(referenceDataset)
         }
-        (Some(referenceDataset), Some(partitionCounts))
+        (Some(referenceDataset), None)
       } else (None, None)
 
     validateSlotNames(featuresSchema)
@@ -446,9 +452,32 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
                     measures)
   }
 
+  private def getNumExecutors(spark: SparkSession): Int = {
+    val executors = ClusterUtil.getExecutors(spark)
+    if (executors.nonEmpty) {
+      log.info(s"Retrieved ${executors.length} executors")
+      executors.length
+    } else {
+      // In local mode there are no real executors, just the driver acting as one
+      val master = spark.sparkContext.master
+      if (master.startsWith("local")) {
+        log.info("Running in local mode, using 1 executor")
+        1
+      } else {
+        // Non-local but block manager not populated yet - estimate from memory status
+        val numExecutorTasks = ClusterUtil.getNumExecutorTasks(spark, 1, log)
+        log.info(s"Estimated $numExecutorTasks executors from getNumExecutorTasks")
+        numExecutorTasks
+      }
+    }
+  }
+
   private def determineNumTasks(dataset: Dataset[_], configNumTasks: Int, numTasksPerExecutor: Int) = {
-    // By default, we try to intelligently calculate the number of executors, but user can override this with numTasks
-    if (configNumTasks > 0) configNumTasks
+    val isStreamingMode = getDataTransferMode == LightGBMConstants.StreamingDataTransferMode
+    if (isStreamingMode) {
+      // Coordinator pattern: 1 task per executor
+      getNumExecutors(dataset.sparkSession)
+    } else if (configNumTasks > 0) configNumTasks
     else {
       val numExecutorTasks = ClusterUtil.getNumExecutorTasks(dataset.sparkSession, numTasksPerExecutor, log)
       min(numExecutorTasks, dataset.rdd.getNumPartitions)
@@ -550,6 +579,43 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
   }
 
   /**
+    * Calculate the reference dataset for Coordinator pattern (streaming mode).
+    * Uses a simple count instead of per-partition row counts.
+    */
+  private def calculateReferenceDataset(dataframe: DataFrame,
+                                         trainingParams: BaseTrainParams,
+                                         numCols: Int,
+                                         measures: InstrumentationMeasures): Array[Byte] = {
+    measures.markRowStatisticsStart()
+
+    val datasetParams = getDatasetCreationParams(
+      trainingParams.generalParams.categoricalFeatures,
+      trainingParams.executionParams.numThreads)
+
+    val precalculatedDataset = getReferenceDataset
+    val serializedReference = if (precalculatedDataset.nonEmpty) {
+      log.info(s"Using precalculated reference Dataset of length: ${precalculatedDataset.length}")
+      precalculatedDataset
+    } else {
+      val totalNumRows = dataframe.count()
+      val collectedSampleData = getSampledRows(dataframe, totalNumRows, trainingParams)
+      log.info(s"Using ${collectedSampleData.length} sample rows")
+
+      ReferenceDatasetUtils.createReferenceDatasetFromSample(
+        datasetParams,
+        getFeaturesCol,
+        totalNumRows,
+        numCols,
+        collectedSampleData,
+        measures,
+        log)
+    }
+
+    measures.markRowStatisticsStop()
+    serializedReference
+  }
+
+  /**
   * Run a parallel job via map partitions to initialize the native library and network,
   * translate the data to the LightGBM in-memory representation and train the models.
   *
@@ -577,11 +643,13 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
                                 numTasks: Int,
                                 numTasksPerExecutor: Int,
                                 measures: InstrumentationMeasures): TrainedModel = {
+    val isStreamingMode = getDataTransferMode == LightGBMConstants.StreamingDataTransferMode
+    val useBarrier = isStreamingMode || getUseBarrierExecutionMode
     val networkManager = NetworkManager.create(numTasks,
                                                dataframe.sparkSession,
                                                getDriverListenPort,
                                                getTimeout,
-                                               getUseBarrierExecutionMode)
+                                               useBarrier)
     val ctx = getTrainingContext(dataframe,
                                  validationData,
                                  serializedReferenceDataset,
@@ -595,7 +663,13 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
                                  networkManager)
 
     // Execute the Tasks on workers
-    val lightGBMBooster = executePartitionTasks(ctx, dataframe, measures)
+    val lightGBMBooster = try {
+      executePartitionTasks(ctx, dataframe, measures)
+    } catch {
+      case e: Exception =>
+        networkManager.shutdown()
+        throw e
+    }
 
     // Wait for network to complete (should be done by now)
     networkManager.waitForNetworkCommunicationsDone()
@@ -610,20 +684,33 @@ trait LightGBMBase[TrainedModel <: Model[TrainedModel] with LightGBMModelParams]
                                       measures: InstrumentationMeasures): LightGBMBooster = {
     // Create the object that will manage the mapPartitions function
     val workerTaskHandler: BasePartitionTask =
-      if (ctx.isStreaming) new StreamingPartitionTask()
+      if (ctx.isStreaming) new CoordinatorPartitionTask()
       else new BulkPartitionTask()
     val mapPartitionsFunc = workerTaskHandler.mapPartitionTask(ctx)(_)
 
     val encoder = Encoders.kryo[PartitionResult]
     measures.markTrainingStart()
     val results: Array[PartitionResult] =
-      if (getUseBarrierExecutionMode)
+      if (ctx.isStreaming || getUseBarrierExecutionMode)
         dataframe.rdd.barrier().mapPartitions(mapPartitionsFunc).collect()
       else
         dataframe.mapPartitions(mapPartitionsFunc)(encoder).collect()
 
     val lightGBMBooster = results.flatMap(r => r.booster).head
     measures.setTaskMeasures(results.map(r => r.taskMeasures))
+
+    // Retrieve metrics from the main worker that returned the booster
+    val mainResult = results.find(_.booster.isDefined)
+    val metricLog = mainResult.map(_.metricLog).getOrElse(Array.empty)
+    if (metricLog.nonEmpty) {
+      println("LightGBM training metrics:")
+      metricLog.foreach(println)
+    }
+
+    // Attach structured metric history to the booster for programmatic access
+    val metricHistory = mainResult.map(_.metricHistory).getOrElse(Array.empty)
+    lightGBMBooster.trainingMetrics = metricHistory
+
     lightGBMBooster
   }
 

@@ -42,6 +42,7 @@ case class TrainingContext(batchIndex: Int,
                            serializedReferenceDataset: Option[Array[Byte]],
                            partitionCounts: Option[Array[Long]]) extends Serializable {
   val isProvideTrainingMetric: Boolean = { trainingParams.isProvideTrainingMetric.getOrElse(false) }
+  val metricLogPeriod: Int = trainingParams.generalParams.metricLogPeriod
   val improvementTolerance: Double = { trainingParams.generalParams.improvementTolerance }
   val earlyStoppingRound: Int = { trainingParams.generalParams.earlyStoppingRound }
   val microBatchSize: Int = { trainingParams.executionParams.microBatchSize }
